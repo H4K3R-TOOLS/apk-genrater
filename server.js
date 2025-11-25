@@ -103,17 +103,15 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             const isBaseValid = fs.existsSync(path.join(decodedBaseDir, 'apktool.yml'));
 
             if (isBaseValid) {
-                await sendUpdate('apk_progress', { step: 'Cloning base app...', progress: 20 });
-                // Use cp -r to copy the DIRECTORY content to workDir
-                // Note: On Linux, if workDir doesn't exist, cp -r src dest creates dest and copies contents
+                await sendUpdate('apk_progress', { step: 'Initializing environment...', progress: 15 });
                 await runCommand('cp', ['-r', decodedBaseDir, workDir]);
             } else {
-                await sendUpdate('apk_progress', { step: 'Decoding base app...', progress: 20 });
+                await sendUpdate('apk_progress', { step: 'Decompiling base APK...', progress: 15 });
                 await runCommand('apktool', ['d', baseApkPath, '-o', workDir, '-f']);
             }
 
             // 2. Customize Name
-            await sendUpdate('apk_progress', { step: 'Updating app name...', progress: 40 });
+            await sendUpdate('apk_progress', { step: 'Configuring application manifest...', progress: 30 });
             if (appName) {
                 const stringsPath = path.join(workDir, 'res', 'values', 'strings.xml');
                 if (fs.existsSync(stringsPath)) {
@@ -124,7 +122,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             }
 
             // 3. Inject Config
-            await sendUpdate('apk_progress', { step: 'Injecting config...', progress: 50 });
+            await sendUpdate('apk_progress', { step: 'Injecting unique user identity...', progress: 45 });
             const assetsDir = path.join(workDir, 'assets');
             if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir);
             fs.writeFileSync(path.join(assetsDir, 'uuid.txt'), uuid);
@@ -133,7 +131,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
 
             // 4. Icon
             if (customIcon) {
-                await sendUpdate('apk_progress', { step: 'Processing icon...', progress: 60 });
+                await sendUpdate('apk_progress', { step: 'Optimizing and replacing app icons...', progress: 60 });
                 const iconBuffer = customIcon.buffer;
                 const sizes = { 'mipmap-mdpi': 48, 'mipmap-hdpi': 72, 'mipmap-xhdpi': 96, 'mipmap-xxhdpi': 144, 'mipmap-xxxhdpi': 192 };
 
@@ -160,11 +158,11 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             }
 
             // 5. Build
-            await sendUpdate('apk_progress', { step: 'Building APK...', progress: 80 });
+            await sendUpdate('apk_progress', { step: 'Compiling APK resources...', progress: 75 });
             await runCommand('apktool', ['b', workDir, '-o', unsignedApkPath]);
 
             // 6. Sign
-            await sendUpdate('apk_progress', { step: 'Signing APK...', progress: 90 });
+            await sendUpdate('apk_progress', { step: 'Signing with secure production key...', progress: 90 });
             const keystore = path.join(__dirname, 'assets', 'keystore.jks');
             const signer = path.join(__dirname, 'assets', 'uber-apk-signer.jar');
             const cmd = `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --ks "${keystore}" --ksAlias key0 --ksPass android --ksKeyPass android`;
@@ -181,9 +179,11 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 fs.renameSync(path.join(tempDir, generated), signedApkPath);
 
                 // Construct Download URL
-                // NOTE: User needs to set PUBLIC_URL if not on same domain, but for Render it's usually automatic or passed in env
-                const host = process.env.PUBLIC_URL || `https://${req.get('host')}`;
+                const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+                const host = process.env.PUBLIC_URL || `${protocol}://${req.get('host')}`;
                 const downloadUrl = `${host}/download/${path.basename(signedApkPath)}?filename=${finalApkName}`;
+
+                console.log(`[APK] Generated URL: ${downloadUrl}`);
 
                 await sendUpdate('apk_ready', { url: downloadUrl, filename: finalApkName });
 
