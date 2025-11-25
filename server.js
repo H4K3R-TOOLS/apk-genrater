@@ -6,7 +6,8 @@ const path = require('path');
 const { spawn, exec } = require('child_process');
 const sharp = require('sharp');
 const axios = require('axios');
-const admin = require('firebase-admin');
+const cloudinary = require('cloudinary').v2;
+const FormData = require('form-data');
 require('dotenv').config();
 
 const app = express();
@@ -14,23 +15,6 @@ const port = process.env.PORT || 4000;
 
 app.use(cors());
 app.use(express.json());
-
-// Initialize Firebase Admin
-// Expects FIREBASE_SERVICE_ACCOUNT (JSON string) and FIREBASE_STORAGE_BUCKET env vars
-if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-    try {
-        const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-        admin.initializeApp({
-            credential: admin.credential.cert(serviceAccount),
-            storageBucket: process.env.FIREBASE_STORAGE_BUCKET
-        });
-        console.log('[Firebase] Initialized successfully');
-    } catch (e) {
-        console.error('[Firebase] Init Error:', e.message);
-    }
-} else {
-    console.warn('[Firebase] Warning: FIREBASE_SERVICE_ACCOUNT not set');
-}
 
 // Storage for icon uploads
 const storage = multer.memoryStorage();
@@ -195,43 +179,77 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
 
             if (generated) {
                 const signedPath = path.join(tempDir, generated);
+                let downloadUrl = "";
 
-                // Upload to Firebase Storage
-                await sendUpdate('apk_progress', { step: 'Uploading to high-speed cloud storage...', progress: 95 });
+                // Strategy 1: Discord Webhook (Best Free Option)
+                if (process.env.DISCORD_WEBHOOK_URL) {
+                    try {
+                        await sendUpdate('apk_progress', { step: 'Uploading to secure cloud storage...', progress: 95 });
+                        const form = new FormData();
+                        form.append('file', fs.createReadStream(signedPath), { filename: finalApkName });
 
-                try {
-                    const bucket = admin.storage().bucket();
-                    const destination = `generated_apks/${finalApkName.replace('.apk', '')}_${uuid}.apk`;
+                        const discordRes = await axios.post(process.env.DISCORD_WEBHOOK_URL, form, {
+                            headers: { ...form.getHeaders() },
+                            maxBodyLength: Infinity,
+                            maxContentLength: Infinity
+                        });
 
-                    await bucket.upload(signedPath, {
-                        destination: destination,
-                        metadata: {
-                            contentType: 'application/vnd.android.package-archive',
+                        if (discordRes.data && discordRes.data.attachments && discordRes.data.attachments.length > 0) {
+                            downloadUrl = discordRes.data.attachments[0].url;
+                            console.log(`[APK] Discord URL: ${downloadUrl}`);
                         }
-                    });
+                    } catch (discordError) {
+                        console.error('[APK] Discord Upload Failed:', discordError.message);
+                    }
+                }
 
-                    // Get Signed URL (valid for 7 days)
-                    const [url] = await bucket.file(destination).getSignedUrl({
-                        action: 'read',
-                        expires: Date.now() + 7 * 24 * 60 * 60 * 1000 // 7 days
-                    });
+                // Strategy 2: Cloudinary (Backup)
+                if (!downloadUrl && process.env.CLOUDINARY_CLOUD_NAME) {
+                    try {
+                        await sendUpdate('apk_progress', { step: 'Uploading to backup cloud...', progress: 95 });
 
-                    console.log(`[APK] Firebase URL: ${url}`);
+                        cloudinary.config({
+                            cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+                            api_key: process.env.CLOUDINARY_API_KEY,
+                            api_secret: process.env.CLOUDINARY_API_SECRET
+                        });
 
-                    // Send Firebase URL
-                    await sendUpdate('apk_ready', { url: url, filename: finalApkName });
+                        // Upload as .bin to bypass APK restriction
+                        const binPath = signedPath.replace('.apk', '.bin');
+                        fs.copyFileSync(signedPath, binPath);
 
-                } catch (uploadError) {
-                    console.error('[APK] Firebase Upload Failed:', uploadError);
-                    // Fallback to local URL if upload fails
+                        const result = await cloudinary.uploader.upload(binPath, {
+                            resource_type: 'raw',
+                            folder: 'generated_apks',
+                            public_id: `${finalApkName.replace('.apk', '')}_${uuid}`,
+                            use_filename: true,
+                            unique_filename: false,
+                            overwrite: true
+                        });
+
+                        downloadUrl = result.secure_url;
+                        console.log(`[APK] Cloudinary URL: ${downloadUrl}`);
+                        fs.unlinkSync(binPath);
+
+                    } catch (uploadError) {
+                        console.error('[APK] Cloudinary Upload Failed:', uploadError);
+                    }
+                }
+
+                // Strategy 3: Direct Download (Fallback)
+                if (!downloadUrl) {
                     fs.renameSync(signedPath, signedApkPath);
                     const protocol = req.headers['x-forwarded-proto'] || req.protocol;
                     const host = process.env.PUBLIC_URL || `${protocol}://${req.get('host')}`;
-                    const downloadUrl = `${host}/download/${path.basename(signedApkPath)}?filename=${finalApkName}`;
-                    await sendUpdate('apk_ready', { url: downloadUrl, filename: finalApkName });
+                    downloadUrl = `${host}/download/${path.basename(signedApkPath)}?filename=${finalApkName}`;
+                } else {
+                    // Cleanup signed file if uploaded
+                    // fs.unlinkSync(signedPath); // Keep for now just in case
                 }
 
-                // Cleanup
+                await sendUpdate('apk_ready', { url: downloadUrl, filename: finalApkName });
+
+                // Cleanup Work Dir
                 fs.rmSync(workDir, { recursive: true, force: true });
                 fs.unlinkSync(unsignedApkPath);
             } else {
