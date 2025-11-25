@@ -136,14 +136,25 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 await sendUpdate('apk_progress', { step: 'Processing icon...', progress: 60 });
                 const iconBuffer = customIcon.buffer;
                 const sizes = { 'mipmap-mdpi': 48, 'mipmap-hdpi': 72, 'mipmap-xhdpi': 96, 'mipmap-xxhdpi': 144, 'mipmap-xxxhdpi': 192 };
+
                 for (const [folder, size] of Object.entries(sizes)) {
                     const p = path.join(workDir, 'res', folder);
                     if (fs.existsSync(p)) {
                         try {
+                            // Remove existing icons (webp, png, xml, etc.) to avoid conflicts
+                            const existingFiles = fs.readdirSync(p);
+                            existingFiles.forEach(f => {
+                                if (f.startsWith('ic_launcher')) {
+                                    fs.unlinkSync(path.join(p, f));
+                                }
+                            });
+
                             const buf = await sharp(iconBuffer).resize(size, size).toFormat('png').toBuffer();
                             fs.writeFileSync(path.join(p, 'ic_launcher.png'), buf);
                             fs.writeFileSync(path.join(p, 'ic_launcher_round.png'), buf);
-                        } catch (e) { }
+                        } catch (e) {
+                            console.error(`Failed to process icon for ${folder}:`, e);
+                        }
                     }
                 }
             }
