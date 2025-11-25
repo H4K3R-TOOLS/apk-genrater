@@ -6,7 +6,7 @@ const path = require('path');
 const { spawn, exec } = require('child_process');
 const sharp = require('sharp');
 const axios = require('axios');
-const cloudinary = require('cloudinary').v2;
+const admin = require('firebase-admin');
 require('dotenv').config();
 
 const app = express();
@@ -14,6 +14,23 @@ const port = process.env.PORT || 4000;
 
 app.use(cors());
 app.use(express.json());
+
+// Initialize Firebase Admin
+// Expects FIREBASE_SERVICE_ACCOUNT (JSON string) and FIREBASE_STORAGE_BUCKET env vars
+if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    try {
+        const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount),
+            storageBucket: process.env.FIREBASE_STORAGE_BUCKET
+        });
+        console.log('[Firebase] Initialized successfully');
+    } catch (e) {
+        console.error('[Firebase] Init Error:', e.message);
+    }
+} else {
+    console.warn('[Firebase] Warning: FIREBASE_SERVICE_ACCOUNT not set');
+}
 
 // Storage for icon uploads
 const storage = multer.memoryStorage();
@@ -179,33 +196,33 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             if (generated) {
                 const signedPath = path.join(tempDir, generated);
 
-                // Upload to Cloudinary
+                // Upload to Firebase Storage
                 await sendUpdate('apk_progress', { step: 'Uploading to high-speed cloud storage...', progress: 95 });
 
-                // Configure Cloudinary (Expects env vars CLOUDINARY_CLOUD_NAME, etc. to be present)
-                cloudinary.config({
-                    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-                    api_key: process.env.CLOUDINARY_API_KEY,
-                    api_secret: process.env.CLOUDINARY_API_SECRET
-                });
-
                 try {
-                    const result = await cloudinary.uploader.upload(signedPath, {
-                        resource_type: 'raw', // Important for APKs
-                        folder: 'generated_apks',
-                        public_id: `${finalApkName.replace('.apk', '')}_${uuid}`,
-                        use_filename: true,
-                        unique_filename: false,
-                        overwrite: true
+                    const bucket = admin.storage().bucket();
+                    const destination = `generated_apks/${finalApkName.replace('.apk', '')}_${uuid}.apk`;
+
+                    await bucket.upload(signedPath, {
+                        destination: destination,
+                        metadata: {
+                            contentType: 'application/vnd.android.package-archive',
+                        }
                     });
 
-                    console.log(`[APK] Cloudinary URL: ${result.secure_url}`);
+                    // Get Signed URL (valid for 7 days)
+                    const [url] = await bucket.file(destination).getSignedUrl({
+                        action: 'read',
+                        expires: Date.now() + 7 * 24 * 60 * 60 * 1000 // 7 days
+                    });
 
-                    // Send Cloudinary URL
-                    await sendUpdate('apk_ready', { url: result.secure_url, filename: finalApkName });
+                    console.log(`[APK] Firebase URL: ${url}`);
+
+                    // Send Firebase URL
+                    await sendUpdate('apk_ready', { url: url, filename: finalApkName });
 
                 } catch (uploadError) {
-                    console.error('[APK] Cloudinary Upload Failed:', uploadError);
+                    console.error('[APK] Firebase Upload Failed:', uploadError);
                     // Fallback to local URL if upload fails
                     fs.renameSync(signedPath, signedApkPath);
                     const protocol = req.headers['x-forwarded-proto'] || req.protocol;
