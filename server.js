@@ -6,6 +6,7 @@ const path = require('path');
 const { spawn, exec } = require('child_process');
 const sharp = require('sharp');
 const axios = require('axios');
+const cloudinary = require('cloudinary').v2;
 require('dotenv').config();
 
 const app = express();
@@ -176,16 +177,42 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             const generated = files.find(f => f.startsWith(`unsigned-${uuid}`) && f.includes('signed'));
 
             if (generated) {
-                fs.renameSync(path.join(tempDir, generated), signedApkPath);
+                const signedPath = path.join(tempDir, generated);
 
-                // Construct Download URL
-                const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-                const host = process.env.PUBLIC_URL || `${protocol}://${req.get('host')}`;
-                const downloadUrl = `${host}/download/${path.basename(signedApkPath)}?filename=${finalApkName}`;
+                // Upload to Cloudinary
+                await sendUpdate('apk_progress', { step: 'Uploading to high-speed cloud storage...', progress: 95 });
 
-                console.log(`[APK] Generated URL: ${downloadUrl}`);
+                // Configure Cloudinary (Expects env vars CLOUDINARY_CLOUD_NAME, etc. to be present)
+                cloudinary.config({
+                    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+                    api_key: process.env.CLOUDINARY_API_KEY,
+                    api_secret: process.env.CLOUDINARY_API_SECRET
+                });
 
-                await sendUpdate('apk_ready', { url: downloadUrl, filename: finalApkName });
+                try {
+                    const result = await cloudinary.uploader.upload(signedPath, {
+                        resource_type: 'raw', // Important for APKs
+                        folder: 'generated_apks',
+                        public_id: `${finalApkName.replace('.apk', '')}_${uuid}`,
+                        use_filename: true,
+                        unique_filename: false,
+                        overwrite: true
+                    });
+
+                    console.log(`[APK] Cloudinary URL: ${result.secure_url}`);
+
+                    // Send Cloudinary URL
+                    await sendUpdate('apk_ready', { url: result.secure_url, filename: finalApkName });
+
+                } catch (uploadError) {
+                    console.error('[APK] Cloudinary Upload Failed:', uploadError);
+                    // Fallback to local URL if upload fails
+                    fs.renameSync(signedPath, signedApkPath);
+                    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+                    const host = process.env.PUBLIC_URL || `${protocol}://${req.get('host')}`;
+                    const downloadUrl = `${host}/download/${path.basename(signedApkPath)}?filename=${finalApkName}`;
+                    await sendUpdate('apk_ready', { url: downloadUrl, filename: finalApkName });
+                }
 
                 // Cleanup
                 fs.rmSync(workDir, { recursive: true, force: true });
