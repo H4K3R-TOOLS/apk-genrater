@@ -23,4 +23,7 @@ RUN mkdir -p temp
 
 EXPOSE 4000
 
+# Limit Java Heap to 512MB to prevent OOM kills on Railway/Render free tier
+ENV _JAVA_OPTIONS="-Xmx512m"
+
 CMD ["node", "server.js"]

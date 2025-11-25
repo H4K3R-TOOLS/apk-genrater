@@ -24,8 +24,9 @@ const runCommand = (command, args, options = {}) => {
         console.log(`[CMD] Running: ${command} ${args.join(' ')}`);
         const proc = spawn(command, args, { ...options, stdio: 'inherit' });
 
-        proc.on('close', (code) => {
+        proc.on('close', (code, signal) => {
             if (code === 0) resolve('Success');
+            else if (signal) reject(new Error(`Command ${command} was killed by signal: ${signal} (Likely OOM)`));
             else reject(new Error(`Command ${command} failed with code ${code}`));
         });
 
@@ -52,7 +53,7 @@ const initBaseApk = async () => {
             await runCommand('apktool', ['d', baseApkPath, '-o', decodedBaseDir, '-f']);
             console.log('[Init] Base APK pre-decoded.');
         } catch (e) {
-            console.error('[Init] Failed:', e);
+            console.error('[Init] Failed:', e.message);
             // Cleanup on fail
             if (fs.existsSync(decodedBaseDir)) fs.rmSync(decodedBaseDir, { recursive: true, force: true });
         }
@@ -60,7 +61,8 @@ const initBaseApk = async () => {
         console.log('[Init] Base APK already pre-decoded and valid.');
     }
 };
-initBaseApk();
+// Run init but don't crash if it fails
+initBaseApk().catch(e => console.error("Init failed fatally:", e));
 
 // Generate Route
 app.post('/generate', upload.single('icon'), async (req, res) => {
