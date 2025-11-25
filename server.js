@@ -40,14 +40,24 @@ const decodedBaseDir = path.join(__dirname, 'temp', 'decoded_base');
 if (!fs.existsSync(path.join(__dirname, 'temp'))) fs.mkdirSync(path.join(__dirname, 'temp'));
 
 const initBaseApk = async () => {
-    if (fs.existsSync(baseApkPath) && !fs.existsSync(decodedBaseDir)) {
+    // Check if valid
+    const isDecodedValid = fs.existsSync(path.join(decodedBaseDir, 'apktool.yml'));
+
+    if (fs.existsSync(baseApkPath) && !isDecodedValid) {
         console.log('[Init] Pre-decoding Base APK...');
+        // Clean partial
+        if (fs.existsSync(decodedBaseDir)) fs.rmSync(decodedBaseDir, { recursive: true, force: true });
+
         try {
             await runCommand('apktool', ['d', baseApkPath, '-o', decodedBaseDir, '-f']);
             console.log('[Init] Base APK pre-decoded.');
         } catch (e) {
             console.error('[Init] Failed:', e);
+            // Cleanup on fail
+            if (fs.existsSync(decodedBaseDir)) fs.rmSync(decodedBaseDir, { recursive: true, force: true });
         }
+    } else if (isDecodedValid) {
+        console.log('[Init] Base APK already pre-decoded and valid.');
     }
 };
 initBaseApk();
@@ -88,8 +98,12 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             if (fs.existsSync(unsignedApkPath)) fs.unlinkSync(unsignedApkPath);
 
             // 1. Copy/Decode
-            if (fs.existsSync(decodedBaseDir)) {
+            const isBaseValid = fs.existsSync(path.join(decodedBaseDir, 'apktool.yml'));
+
+            if (isBaseValid) {
                 await sendUpdate('apk_progress', { step: 'Cloning base app...', progress: 20 });
+                // Use cp -r to copy the DIRECTORY content to workDir
+                // Note: On Linux, if workDir doesn't exist, cp -r src dest creates dest and copies contents
                 await runCommand('cp', ['-r', decodedBaseDir, workDir]);
             } else {
                 await sendUpdate('apk_progress', { step: 'Decoding base app...', progress: 20 });
