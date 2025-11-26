@@ -143,24 +143,20 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                     'mipmap-xxxhdpi': 192
                 };
 
-                // Also clean drawable to be safe
-                const drawableDirs = ['drawable', 'drawable-v24'];
-                drawableDirs.forEach(d => {
-                    const p = path.join(workDir, 'res', d);
-                    if (fs.existsSync(p)) {
-                        const files = fs.readdirSync(p);
-                        files.forEach(f => {
-                            if (f.startsWith('ic_launcher')) fs.unlinkSync(path.join(p, f));
-                        });
-                    }
-                });
+                // 1. Delete the adaptive icon folder (mipmap-anydpi-v26)
+                // This forces Android to use the density-specific PNGs we are about to write
+                // and stops it from using the XML adaptive icons that reference the background/foreground drawables.
+                const adaptiveIconDir = path.join(workDir, 'res', 'mipmap-anydpi-v26');
+                if (fs.existsSync(adaptiveIconDir)) {
+                    fs.rmSync(adaptiveIconDir, { recursive: true, force: true });
+                }
 
+                // 2. Replace icons in density folders
                 for (const [folder, size] of Object.entries(sizes)) {
                     const p = path.join(workDir, 'res', folder);
                     if (fs.existsSync(p)) {
                         try {
-                            // Aggressively remove ALL existing icon files (xml, png, webp)
-                            // This forces Android to use our new PNGs and ignore any adaptive icon XMLs
+                            // Remove existing icons (webp, png, xml, etc.)
                             const existingFiles = fs.readdirSync(p);
                             existingFiles.forEach(f => {
                                 if (f.startsWith('ic_launcher')) {
