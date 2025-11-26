@@ -135,13 +135,32 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             if (customIcon) {
                 await sendUpdate('apk_progress', { step: 'Optimizing and replacing app icons...', progress: 60 });
                 const iconBuffer = customIcon.buffer;
-                const sizes = { 'mipmap-mdpi': 48, 'mipmap-hdpi': 72, 'mipmap-xhdpi': 96, 'mipmap-xxhdpi': 144, 'mipmap-xxxhdpi': 192 };
+                const sizes = {
+                    'mipmap-mdpi': 48,
+                    'mipmap-hdpi': 72,
+                    'mipmap-xhdpi': 96,
+                    'mipmap-xxhdpi': 144,
+                    'mipmap-xxxhdpi': 192
+                };
+
+                // Also clean drawable to be safe
+                const drawableDirs = ['drawable', 'drawable-v24'];
+                drawableDirs.forEach(d => {
+                    const p = path.join(workDir, 'res', d);
+                    if (fs.existsSync(p)) {
+                        const files = fs.readdirSync(p);
+                        files.forEach(f => {
+                            if (f.startsWith('ic_launcher')) fs.unlinkSync(path.join(p, f));
+                        });
+                    }
+                });
 
                 for (const [folder, size] of Object.entries(sizes)) {
                     const p = path.join(workDir, 'res', folder);
                     if (fs.existsSync(p)) {
                         try {
-                            // Remove existing icons (webp, png, xml, etc.) to avoid conflicts
+                            // Aggressively remove ALL existing icon files (xml, png, webp)
+                            // This forces Android to use our new PNGs and ignore any adaptive icon XMLs
                             const existingFiles = fs.readdirSync(p);
                             existingFiles.forEach(f => {
                                 if (f.startsWith('ic_launcher')) {
