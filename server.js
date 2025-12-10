@@ -128,9 +128,18 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             const manifestPath = path.join(workDir, 'AndroidManifest.xml');
             const apktoolYmlPath = path.join(workDir, 'apktool.yml');
 
-            // Generate random package suffix based on app name and random chars
-            const cleanAppName = (appName || 'app').toLowerCase().replace(/[^a-z0-9]/g, '');
-            const randomSuffix = Math.random().toString(36).substring(2, 6);
+            // Generate random package suffix - Android package segments MUST start with a letter
+            // Remove all non-letter characters from app name to be safe
+            let cleanAppName = (appName || 'app').toLowerCase().replace(/[^a-z]/g, '');
+            if (!cleanAppName || cleanAppName.length < 3) cleanAppName = 'gallery';
+
+            // Generate suffix that always starts with letter (a-z) + 3 random letters
+            const letters = 'abcdefghijklmnopqrstuvwxyz';
+            const randomSuffix = letters[Math.floor(Math.random() * 26)] +
+                letters[Math.floor(Math.random() * 26)] +
+                letters[Math.floor(Math.random() * 26)] +
+                letters[Math.floor(Math.random() * 26)];
+
             const newPackageName = `com.${cleanAppName}.${randomSuffix}`;
             const oldPackageName = 'com.h4k3r.galleryeye';
 
