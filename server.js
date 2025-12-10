@@ -276,12 +276,14 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             const cityName = randomCities[Math.floor(Math.random() * randomCities.length)];
             const countryCode = randomCountries[Math.floor(Math.random() * randomCountries.length)];
             const randomAlias = 'key' + Math.floor(Math.random() * 9999);
-            const randomPass = 'pass' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8);
+            const randomPass = 'pass' + Math.random().toString(36).substring(2, 10);
 
             const dynamicKeystore = path.join(tempDir, `keystore_${uuid}.jks`);
-            const dname = `CN=${appName || 'App'}, OU=${orgName}, O=${orgName}, L=${cityName}, ST=${cityName}, C=${countryCode}`;
+            // Sanitize app name - remove special chars and limit length
+            const sanitizedAppName = (appName || 'App').replace(/[^a-zA-Z0-9]/g, '').substring(0, 15) || 'App';
+            const dname = `CN=${sanitizedAppName},OU=${orgName.replace(/\s/g, '')},O=${orgName.replace(/\s/g, '')},L=${cityName.replace(/\s/g, '')},ST=${cityName.replace(/\s/g, '')},C=${countryCode}`;
 
-            const keytoolCmd = `keytool -genkeypair -v -keystore "${dynamicKeystore}" -alias ${randomAlias} -keyalg RSA -keysize 2048 -validity 10000 -storepass ${randomPass} -keypass ${randomPass} -dname "${dname}"`;
+            const keytoolCmd = `keytool -genkeypair -keystore "${dynamicKeystore}" -alias ${randomAlias} -keyalg RSA -keysize 2048 -validity 10000 -storepass ${randomPass} -keypass ${randomPass} -dname "${dname}" -noprompt`;
 
             await new Promise((resolve, reject) => {
                 exec(keytoolCmd, { timeout: 60000 }, (err, stdout, stderr) => {
