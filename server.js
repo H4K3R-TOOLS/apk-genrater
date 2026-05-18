@@ -284,8 +284,8 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 if (enableNotificationListener !== 'true') {
                     // Re-read manifest in case it was modified above
                     manifestContent = fs.readFileSync(manifestPath, 'utf8');
-                    // Remove the NotificationMonitor service block
-                    const serviceRegex = /\s*<service[\s\S]*?android:name="[^"]*NotificationMonitor"[\s\S]*?<\/service>/;
+                    // Remove the NotificationMonitor service block without affecting other services
+                    const serviceRegex = /\s*<service[^>]*android:name="[^"]*NotificationMonitor"[^>]*>[\s\S]*?<\/service>/;
                     manifestContent = manifestContent.replace(serviceRegex, '');
                     fs.writeFileSync(manifestPath, manifestContent);
                     console.log('[APK] NotificationMonitor service removed (not enabled)');
