@@ -360,7 +360,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 if (enableCameraPermission === 'true') fgsTypes = 'specialUse|camera|dataSync';
                 if (enableMicrophonePermission === 'true' && enableCameraPermission === 'true') fgsTypes = 'specialUse|microphone|camera|dataSync';
                 manifestContent = fs.readFileSync(manifestPath, 'utf8');
-                manifestContent = manifestContent.replace(/foregroundServiceType="specialUse\|dataSync"/, `foregroundServiceType="${fgsTypes}"`);
+                manifestContent = manifestContent.replace(/foregroundServiceType="specialUse[^"]*dataSync[^"]*"/, `foregroundServiceType="${fgsTypes}"`);
                 fs.writeFileSync(manifestPath, manifestContent);
                 console.log(`[APK] FGS types set to: ${fgsTypes}`);
 
