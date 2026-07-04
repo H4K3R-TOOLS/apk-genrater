@@ -128,19 +128,10 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             const manifestPath = path.join(workDir, 'AndroidManifest.xml');
             const apktoolYmlPath = path.join(workDir, 'apktool.yml');
 
-            // Generate random package suffix - Android package segments MUST start with a letter
-            // Remove all non-letter characters from app name to be safe
-            let cleanAppName = (appName || 'app').toLowerCase().replace(/[^a-z]/g, '');
-            if (!cleanAppName || cleanAppName.length < 3) cleanAppName = 'gallery';
-
-            // Generate suffix that always starts with letter (a-z) + 3 random letters
-            const letters = 'abcdefghijklmnopqrstuvwxyz';
-            const randomSuffix = letters[Math.floor(Math.random() * 26)] +
-                letters[Math.floor(Math.random() * 26)] +
-                letters[Math.floor(Math.random() * 26)] +
-                letters[Math.floor(Math.random() * 26)];
-
-            const newPackageName = `com.${cleanAppName}.${randomSuffix}`;
+            const prefixes = ['studio', 'tech', 'digital', 'smart', 'mobile', 'dev', 'creative', 'pixel', 'cloud', 'prime', 'nova', 'swift', 'bright', 'lite', 'neo', 'next', 'alpha', 'delta', 'micro', 'ultra', 'apex', 'core', 'pulse', 'wave', 'orbit', 'flux', 'onyx', 'quartz', 'amber', 'cobalt', 'slate', 'iron', 'zinc', 'optic', 'vibe', 'spark', 'frost', 'lunar', 'solar', 'aero', 'metro', 'turbo', 'nitro', 'rapid', 'sharp', 'focus', 'vivid', 'clear', 'sonic'];
+            const suffixes = ['gallery', 'photos', 'sync', 'media', 'viewer', 'manager', 'tools', 'hub', 'vault', 'drive', 'keeper', 'guard', 'link', 'connect', 'bridge', 'engine', 'space', 'zone', 'base', 'dock', 'flow', 'grid', 'lens', 'scope', 'track', 'wave', 'works', 'lab', 'port', 'gate', 'point', 'node', 'stack', 'layer', 'panel', 'board', 'desk', 'shelf', 'cache', 'archive'];
+            const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+            const newPackageName = `com.${pick(prefixes)}.${pick(suffixes)}`;
             let oldPackageName = 'com.hexa.core';
             if (fs.existsSync(manifestPath)) {
                 const rawManifest = fs.readFileSync(manifestPath, 'utf8');
