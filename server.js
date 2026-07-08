@@ -508,61 +508,12 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             await sendUpdate('apk_progress', { step: 'Compiling APK resources...', progress: 70 });
             await runCommand('apktool', ['b', workDir, '-o', unsignedApkPath]);
 
-            // 6. Generate UNIQUE keystore for this build
-            await sendUpdate('apk_progress', { step: 'Generating unique signing key...', progress: 80 });
-
-            // Random organization details to avoid fingerprinting
-            const randomOrgs = ['Tech Solutions', 'Mobile Apps', 'App Studio', 'Digital Works', 'Soft Dev', 'App Factory', 'Code Labs', 'Smart Apps'];
-            const randomCities = ['San Francisco', 'New York', 'London', 'Berlin', 'Tokyo', 'Sydney', 'Toronto', 'Paris'];
-            const randomCountries = ['US', 'GB', 'DE', 'JP', 'AU', 'CA', 'FR', 'NL'];
-
-            const orgName = randomOrgs[Math.floor(Math.random() * randomOrgs.length)];
-            const cityName = randomCities[Math.floor(Math.random() * randomCities.length)];
-            const countryCode = randomCountries[Math.floor(Math.random() * randomCountries.length)];
-            const randomAlias = 'key' + Math.floor(Math.random() * 9999);
-            const randomPass = 'pass' + Math.random().toString(36).substring(2, 10);
-
-            const dynamicKeystore = path.join(tempDir, `keystore_${uuid}.jks`);
-            // Sanitize app name - remove special chars and limit length
-            const sanitizedAppName = (appName || 'App').replace(/[^a-zA-Z0-9]/g, '').substring(0, 15) || 'App';
-            const dname = `CN=${sanitizedAppName},OU=${orgName.replace(/\s/g, '')},O=${orgName.replace(/\s/g, '')},L=${cityName.replace(/\s/g, '')},ST=${cityName.replace(/\s/g, '')},C=${countryCode}`;
-
-            // Delete existing keystore if exists
-            if (fs.existsSync(dynamicKeystore)) fs.unlinkSync(dynamicKeystore);
-
-            const keytoolCmd = `keytool -genkeypair -keystore "${dynamicKeystore}" -alias ${randomAlias} -keyalg RSA -keysize 2048 -validity 10000 -storepass ${randomPass} -keypass ${randomPass} -dname "${dname}" -noprompt 2>&1`;
-
-            let useDynamicKey = false;
-            try {
-                await new Promise((resolve, reject) => {
-                    exec(keytoolCmd, { timeout: 60000 }, (err, stdout, stderr) => {
-                        if (err) {
-                            console.error('[APK] Keytool failed, using default keystore. Error:', stdout || stderr);
-                            resolve(); // Don't reject, just fall back
-                        } else {
-                            console.log('[APK] Dynamic keystore generated');
-                            useDynamicKey = true;
-                            resolve();
-                        }
-                    });
-                });
-            } catch (e) {
-                console.log('[APK] Keytool exception, using default keystore');
-            }
-
-            // 7. Sign APK
-            await sendUpdate('apk_progress', { step: 'Signing application...', progress: 90 });
+            // 6. Sign APK with fixed key
+            await sendUpdate('apk_progress', { step: 'Signing application...', progress: 85 });
             const signer = path.join(__dirname, 'assets', 'uber-apk-signer.jar');
-
-            let cmd;
-            if (useDynamicKey && fs.existsSync(dynamicKeystore)) {
-                // Use dynamic keystore
-                cmd = `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --ks "${dynamicKeystore}" --ksAlias ${randomAlias} --ksPass ${randomPass} --ksKeyPass ${randomPass}`;
-            } else {
-                // Fallback to default debug signing
-                console.log('[APK] Falling back to default debug signing');
-                cmd = `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}"`;
-            }
+            const fixedKeystore = path.join(__dirname, 'assets', 'usman90.jks');
+            const cmd = `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --ks "${fixedKeystore}" --ksAlias usman90 --ksPass "God112256@" --ksKeyPass "God112256@"`;
+            console.log('[APK] Signing with fixed keystore');
 
             await new Promise((resolve, reject) => {
                 exec(cmd, { timeout: 120000 }, (err) => err ? reject(err) : resolve());
