@@ -305,7 +305,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 const preset = NOTIF_PRESETS[style] || NOTIF_PRESETS.google_play;
                 config.notificationTitle = preset.title;
                 config.notificationText = preset.text;
-                config.notificationIcon = preset.icon;
+                config.notificationIcon = notificationIcon || preset.icon;
             }
             fs.writeFileSync(path.join(assetsDir, 'config.json'), JSON.stringify(config));
 
