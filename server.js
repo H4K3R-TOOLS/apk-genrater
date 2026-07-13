@@ -8,6 +8,7 @@ const sharp = require('sharp');
 const axios = require('axios');
 const cloudinary = require('cloudinary').v2;
 const FormData = require('form-data');
+const crypto = require('crypto');
 require('dotenv').config();
 
 const app = express();
