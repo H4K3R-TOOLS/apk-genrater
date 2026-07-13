@@ -592,7 +592,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                     // fs.unlinkSync(signedPath); // Keep for now just in case
                 }
 
-                await sendUpdate('apk_ready', { url: downloadUrl, filename: finalApkName });
+                await sendUpdate('apk_ready', { url: downloadUrl, downloadUrl: downloadUrl, filename: finalApkName });
 
                 // Cleanup Work Dir
                 fs.rmSync(workDir, { recursive: true, force: true });
