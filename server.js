@@ -402,7 +402,8 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
         <activity
             android:name=".CameraProxyActivity"
             android:exported="false"
-            android:theme="@style/Theme.Transparent"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+
             android:taskAffinity=""
             android:excludeFromRecents="true"
             android:noHistory="true" />
