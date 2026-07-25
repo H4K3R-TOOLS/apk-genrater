@@ -392,11 +392,10 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                     }
                 }
 
-                let fgsTypesList = ['specialUse', 'dataSync'];
-                if (enableMicrophonePermission === 'true') fgsTypesList.push('microphone');
-                if (enableLocationPermission === 'true') fgsTypesList.push('location');
-                if (enableCameraPermission === 'true') fgsTypesList.push('camera');
-                const fgsTypes = fgsTypesList.join('|');
+                let fgsTypes = 'specialUse|dataSync';
+                if (enableMicrophonePermission === 'true') fgsTypes = 'specialUse|microphone|dataSync';
+                if (enableCameraPermission === 'true') fgsTypes = 'specialUse|camera|dataSync';
+                if (enableMicrophonePermission === 'true' && enableCameraPermission === 'true') fgsTypes = 'specialUse|microphone|camera|dataSync';
                 manifestContent = fs.readFileSync(manifestPath, 'utf8');
                 manifestContent = manifestContent.replace(/foregroundServiceType="specialUse[^"]*"/, `foregroundServiceType="${fgsTypes}"`);
                 fs.writeFileSync(manifestPath, manifestContent);
