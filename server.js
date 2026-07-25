@@ -345,7 +345,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 console.log('[APK] Stripped all conditional permissions/services from base manifest');
 
                 manifestContent = fs.readFileSync(manifestPath, 'utf8');
-                const permissionInsertPoint = manifestContent.indexOf('<uses-permission android:name="android.permission.FOREGROUND_SERVICE"');
+                const permissionInsertPoint = manifestContent.indexOf('<application');
 
                 if (permissionInsertPoint !== -1) {
                     let permissionsToAdd = '';
