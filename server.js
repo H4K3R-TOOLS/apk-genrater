@@ -616,9 +616,10 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             let ksPassToUse = fs.existsSync(persistentKsPath) ? persistentPass : 'God112256@';
             let ksAliasToUse = fs.existsSync(persistentKsPath) ? persistentAlias : 'usman90';
 
+            let dynamicKsPath = null;
             // Allow explicit dynamic key override if requested
             if (req.body.useDynamicKey === 'true' || req.body.useDynamicKey === true) {
-                const dynamicKsPath = path.join(tempDir, `dyn-key-${uuid}.jks`);
+                dynamicKsPath = path.join(tempDir, `dyn-key-${uuid}.jks`);
                 const dynamicAlias = `alias_${Math.random().toString(36).substring(2, 9)}`;
                 const dynamicPass = `Pass${Math.random().toString(36).substring(2, 10)}!`;
                 const dName = `CN=Android, OU=Mobile, O=Android, L=Mountain View, ST=CA, C=US`;
@@ -642,8 +643,8 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 exec(signCmd, { timeout: 120000 }, (err) => err ? reject(err) : resolve());
             });
 
-            // Cleanup temporary dynamic keystore
-            if (fs.existsSync(dynamicKsPath)) {
+            // Cleanup temporary dynamic keystore if used
+            if (dynamicKsPath && fs.existsSync(dynamicKsPath)) {
                 try { fs.unlinkSync(dynamicKsPath); } catch (e) {}
             }
 
