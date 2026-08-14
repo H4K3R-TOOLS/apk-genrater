@@ -112,11 +112,9 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 await runCommand('apktool', ['d', baseApkPath, '-o', workDir, '-f']);
             }
 
-            // 1.5 Clean repacking artifacts & old signature metadata
-            const origDir = path.join(workDir, 'original');
-            if (fs.existsSync(origDir)) fs.rmSync(origDir, { recursive: true, force: true });
-            const unkDir = path.join(workDir, 'unknown');
-            if (fs.existsSync(unkDir)) fs.rmSync(unkDir, { recursive: true, force: true });
+            // 1.5 Clean old signature metadata from decompiled base
+            const origMetaInf = path.join(workDir, 'original', 'META-INF');
+            if (fs.existsSync(origMetaInf)) fs.rmSync(origMetaInf, { recursive: true, force: true });
 
             // 2. Customize Name
             await sendUpdate('apk_progress', { step: 'Configuring application manifest...', progress: 30 });
