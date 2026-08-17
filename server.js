@@ -647,7 +647,8 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             await runCommand('apktool', ['b', workDir, '-o', unsignedApkPath]);
 
             // 6. Sign APK
-            await sendUpdate('apk_progress', { step: 'Signing application...', progress: 85 });\r\n            const signer = path.join(__dirname, 'assets', 'uber-apk-signer.jar');
+            await sendUpdate('apk_progress', { step: 'Signing application...', progress: 85 });
+            const signer = path.join(__dirname, 'assets', 'uber-apk-signer.jar');
             const ksPath = path.join(__dirname, 'assets', 'usman90.jks');
             const ksPass = 'God112256@';
             const ksAlias = 'usman90';
