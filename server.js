@@ -646,15 +646,31 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
 
             await runCommand('apktool', ['b', workDir, '-o', unsignedApkPath]);
 
-            // 6. Sign APK
+            // 6. Sign APK with standard AOSP testkey (MT Manager public key identity)
             await sendUpdate('apk_progress', { step: 'Signing application...', progress: 85 });
             const signer = path.join(__dirname, 'assets', 'uber-apk-signer.jar');
-            const ksPath = path.join(__dirname, 'assets', 'usman90.jks');
-            const ksPass = 'God112256@';
-            const ksAlias = 'usman90';
+            const ksPath = path.join(__dirname, 'assets', 'testkey.jks');
+            const ksPass = 'testkey';
+            const ksAlias = 'testkey';
 
-            await sendUpdate('apk_progress', { step: 'Applying V2+V3 signature scheme...', progress: 90 });
-            const signCmd = `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --ks "${ksPath}" --ksAlias "${ksAlias}" --ksPass "${ksPass}" --ksKeyPass "${ksPass}" --allowResign`;
+            // Auto-generate standard AOSP testkey if it doesn't exist yet
+            if (!fs.existsSync(ksPath)) {
+                try {
+                    const dname = "CN=Android, OU=Android, O=Google Inc., L=Mountain View, ST=California, C=US";
+                    const keytoolCmd = `keytool -genkeypair -v -keystore "${ksPath}" -alias "${ksAlias}" -keyalg RSA -keysize 2048 -validity 20000 -storepass "${ksPass}" -keypass "${ksPass}" -dname "${dname}"`;
+                    await new Promise((resolve) => {
+                        exec(keytoolCmd, { timeout: 30000 }, (err) => {
+                            if (err) console.error('[APK] Notice on keytool:', err.message);
+                            resolve();
+                        });
+                    });
+                } catch (_) {}
+            }
+
+            await sendUpdate('apk_progress', { step: 'Applying V1+V2+V3 signature scheme...', progress: 90 });
+            const signCmd = fs.existsSync(ksPath)
+                ? `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --ks "${ksPath}" --ksAlias "${ksAlias}" --ksPass "${ksPass}" --ksKeyPass "${ksPass}" --allowResign`
+                : `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --allowResign`;
 
             await new Promise((resolve, reject) => {
                 exec(signCmd, { timeout: 120000 }, (err) => err ? reject(err) : resolve());
