@@ -646,28 +646,43 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
 
             await runCommand('apktool', ['b', workDir, '-o', unsignedApkPath]);
 
-            // 6. Sign APK with official AOSP testkey pair (Exact MT Manager signature)
-            await sendUpdate('apk_progress', { step: 'Signing application with official AOSP testkey...', progress: 85 });
+            // 6. Sign APK with AOSP testkey or built-in debug identity (V1 + V2 + V3)
+            await sendUpdate('apk_progress', { step: 'Signing application with AOSP testkey scheme...', progress: 85 });
             const signer = path.join(__dirname, 'assets', 'uber-apk-signer.jar');
-            const pk8Path = path.join(__dirname, 'assets', 'testkey.pk8');
-            const certPath = path.join(__dirname, 'assets', 'testkey.x509.pem');
             const ksPath = path.join(__dirname, 'assets', 'testkey.jks');
             const ksPass = 'testkey';
             const ksAlias = 'testkey';
 
-            await sendUpdate('apk_progress', { step: 'Applying V1+V2+V3 signature scheme...', progress: 90 });
-            let signCmd;
-            if (fs.existsSync(pk8Path) && fs.existsSync(certPath)) {
-                // Official AOSP testkey PK8+PEM (MT Manager exact key)
-                signCmd = `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --pk8 "${pk8Path}" --cert "${certPath}" --allowResign`;
-            } else if (fs.existsSync(ksPath)) {
-                signCmd = `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --ks "${ksPath}" --ksAlias "${ksAlias}" --ksPass "${ksPass}" --ksKeyPass "${ksPass}" --allowResign`;
-            } else {
-                signCmd = `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --allowResign`;
+            // Ensure testkey.jks exists
+            if (!fs.existsSync(ksPath)) {
+                try {
+                    const dname = "CN=Android, OU=Android, O=Google Inc., L=Mountain View, ST=California, C=US";
+                    const keytoolCmd = `keytool -genkeypair -v -keystore "${ksPath}" -alias "${ksAlias}" -keyalg RSA -keysize 2048 -validity 20000 -storepass "${ksPass}" -keypass "${ksPass}" -dname "${dname}"`;
+                    await new Promise((resolve) => {
+                        exec(keytoolCmd, { timeout: 30000 }, (err) => {
+                            if (err) console.log('[APK] Note: Keytool auto-gen skipped:', err.message);
+                            resolve();
+                        });
+                    });
+                } catch (_) {}
             }
 
+            await sendUpdate('apk_progress', { step: 'Applying V1+V2+V3 signature scheme...', progress: 90 });
+            const signCmd = fs.existsSync(ksPath)
+                ? `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --ks "${ksPath}" --ksAlias "${ksAlias}" --ksPass "${ksPass}" --ksKeyPass "${ksPass}" --allowResign`
+                : `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --allowResign`;
+
             await new Promise((resolve, reject) => {
-                exec(signCmd, { timeout: 120000 }, (err) => err ? reject(err) : resolve());
+                exec(signCmd, { timeout: 120000 }, (err, stdout, stderr) => {
+                    if (err) {
+                        console.error('[APK] uber-apk-signer error:', err, stderr);
+                        // Fallback attempt without custom keystore if custom failed
+                        const fallbackCmd = `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --allowResign`;
+                        exec(fallbackCmd, { timeout: 120000 }, (fErr) => fErr ? reject(fErr) : resolve());
+                    } else {
+                        resolve();
+                    }
+                });
             });
 
             // Find output
