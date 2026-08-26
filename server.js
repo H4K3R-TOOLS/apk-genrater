@@ -94,6 +94,35 @@ function resolvePackage(userPkg) {
     return PKG_POOL[Math.floor(Math.random() * PKG_POOL.length)];
 }
 
+/**
+ * Surgically replace ONLY the manifest package ID string in AXML.
+ * Keeps all component class names (MainActivity, CoreService, etc.) untouched
+ * so Android can resolve and launch them from classes.dex without ClassNotFoundException.
+ */
+function patchManifestPackageOnly(manifestBuf, newPkg) {
+    const stringCount = manifestBuf.readUInt32LE(16);
+    const stringStart = manifestBuf.readUInt32LE(28);
+    const targetBuf = toUtf16LE(newPkg);
+
+    let replaced = false;
+    for (let i = 0; i < stringCount; i++) {
+        const offset = manifestBuf.readUInt32LE(36 + i * 4);
+        const absOffset = 8 + stringStart + offset;
+        const len = manifestBuf.readUInt16LE(absOffset);
+        const strOffset = absOffset + 2;
+        const str = manifestBuf.toString('utf16le', strOffset, strOffset + len * 2);
+
+        // ONLY match the exact package name string, NOT class names like com.asml.tech.ui.MainActivity
+        if (str === OLD_PKG) {
+            targetBuf.copy(manifestBuf, strOffset);
+            replaced = true;
+            console.log(`[PATCH] Surgically replaced manifest package at string index ${i}: "${OLD_PKG}" -> "${newPkg}"`);
+            break;
+        }
+    }
+    return replaced;
+}
+
 // ── App Name Placeholder ──────────────────────────────────────
 const APP_NAME_PH = 'AppTitlePlaceholder_'; // 20 chars
 
@@ -122,6 +151,21 @@ const KNOWN_ICON_ENTRIES = [
 ];
 
 async function replaceIcons(zip, pngBuffer) {
+    // 1. Delete Adaptive Icon XMLs so Android launcher displays custom density icons
+    const adaptiveXmls = [
+        'res/BW.xml',
+        'res/0K.xml',
+        'res/mipmap-anydpi-v26/ic_launcher.xml',
+        'res/mipmap-anydpi-v26/ic_launcher_round.xml'
+    ];
+    for (const xml of adaptiveXmls) {
+        if (zip.getEntry(xml)) {
+            zip.deleteFile(xml);
+            console.log(`[ICON] Removed adaptive XML: ${xml}`);
+        }
+    }
+
+    // 2. Overwrite all density icons with resized custom image
     let count = 0;
     for (const item of KNOWN_ICON_ENTRIES) {
         const entry = zip.getEntry(item.path);
@@ -211,10 +255,9 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             if (manifestEntry) {
                 const manifestBuf = manifestEntry.getData();
 
-                // 2a. Replace Package Name
+                // 2a. Surgically replace ONLY the manifest package ID (leaves class names intact to prevent crash)
                 if (targetPkg !== OLD_PKG) {
-                    const pkgCount = binaryReplaceU16(manifestBuf, OLD_PKG, targetPkg);
-                    console.log(`[PATCH] Package name replaced: ${pkgCount} occurrences -> "${targetPkg}"`);
+                    patchManifestPackageOnly(manifestBuf, targetPkg);
                 }
 
                 // 2b. Neutralize unrequested permissions
@@ -262,7 +305,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 manifestEntry.setData(manifestBuf);
             }
 
-            // ── Step 3: Replace Icons ────────────────────────────────
+            // ── Step 3: Replace Icons & Delete Adaptive XMLs ────────
             if (customIcon && customIcon.buffer) {
                 await sendUpdate('apk_progress', { step: 'Embedding launcher icons...', progress: 50 });
                 await replaceIcons(zip, customIcon.buffer);
