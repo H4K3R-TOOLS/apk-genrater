@@ -143,11 +143,21 @@ const KNOWN_ICON_ENTRIES = [
     { path: 'res/mipmap-xhdpi/ic_launcher.webp', size: 96 },
     { path: 'res/mipmap-xxhdpi/ic_launcher.webp', size: 144 },
     { path: 'res/mipmap-xxxhdpi/ic_launcher.webp', size: 192 },
+    { path: 'res/mipmap-mdpi/ic_launcher_round.webp', size: 48 },
+    { path: 'res/mipmap-hdpi/ic_launcher_round.webp', size: 72 },
+    { path: 'res/mipmap-xhdpi/ic_launcher_round.webp', size: 96 },
+    { path: 'res/mipmap-xxhdpi/ic_launcher_round.webp', size: 144 },
+    { path: 'res/mipmap-xxxhdpi/ic_launcher_round.webp', size: 192 },
     { path: 'res/mipmap-mdpi/ic_launcher.png', size: 48 },
     { path: 'res/mipmap-hdpi/ic_launcher.png', size: 72 },
     { path: 'res/mipmap-xhdpi/ic_launcher.png', size: 96 },
     { path: 'res/mipmap-xxhdpi/ic_launcher.png', size: 144 },
     { path: 'res/mipmap-xxxhdpi/ic_launcher.png', size: 192 },
+    { path: 'res/mipmap-mdpi/ic_launcher_round.png', size: 48 },
+    { path: 'res/mipmap-hdpi/ic_launcher_round.png', size: 72 },
+    { path: 'res/mipmap-xhdpi/ic_launcher_round.png', size: 96 },
+    { path: 'res/mipmap-xxhdpi/ic_launcher_round.png', size: 144 },
+    { path: 'res/mipmap-xxxhdpi/ic_launcher_round.png', size: 192 },
 ];
 
 async function replaceIcons(zip, pngBuffer) {
@@ -165,24 +175,54 @@ async function replaceIcons(zip, pngBuffer) {
         }
     }
 
-    // 2. Overwrite all density icons with resized custom image
+    // 2. Pre-generate WebP & PNG buffers for standard sizes (48, 72, 96, 144, 192)
+    const sizes = [48, 72, 96, 144, 192];
+    const webpCache = {};
+    const pngCache = {};
+    for (const s of sizes) {
+        webpCache[s] = await sharp(pngBuffer).resize(s, s).webp({ quality: 95 }).toBuffer();
+        pngCache[s] = await sharp(pngBuffer).resize(s, s).png().toBuffer();
+    }
+
+    // 3. Overwrite all known entries
     let count = 0;
     for (const item of KNOWN_ICON_ENTRIES) {
         const entry = zip.getEntry(item.path);
         if (entry) {
             try {
                 const isPng = item.path.endsWith('.png');
-                const buf = isPng
-                    ? await sharp(pngBuffer).resize(item.size, item.size).png().toBuffer()
-                    : await sharp(pngBuffer).resize(item.size, item.size).webp({ quality: 95 }).toBuffer();
-                entry.setData(buf);
-                count++;
+                const buf = isPng ? pngCache[item.size] : webpCache[item.size];
+                if (buf) {
+                    entry.setData(buf);
+                    count++;
+                }
             } catch (err) {
                 console.error(`[ICON] Failed replacing ${item.path}:`, err.message);
             }
         }
     }
-    console.log(`[ICON] Replaced ${count} icon files across all densities`);
+
+    // 4. Scan for any remaining mipmap entries in ZIP and replace them
+    for (const entry of zip.getEntries()) {
+        const name = entry.entryName;
+        if (name.startsWith('res/mipmap-') && (name.endsWith('.webp') || name.endsWith('.png'))) {
+            let size = 96;
+            if (name.includes('mdpi')) size = 48;
+            else if (name.includes('hdpi')) size = 72;
+            else if (name.includes('xhdpi')) size = 96;
+            else if (name.includes('xxhdpi')) size = 144;
+            else if (name.includes('xxxhdpi')) size = 192;
+
+            const isPng = name.endsWith('.png');
+            const buf = isPng ? pngCache[size] : webpCache[size];
+            if (buf) {
+                entry.setData(buf);
+                count++;
+            }
+        }
+    }
+
+    console.log(`[ICON] Successfully replaced ${count} icon files across all densities`);
 }
 
 // ── Notification Presets ─────────────────────────────────────
