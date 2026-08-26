@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const multer = require('multer');
 const cors = require('cors');
 const fs = require('fs');
@@ -249,6 +249,24 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 }
             };
             updateResXmlPackage(path.join(workDir, 'res'));
+
+            // 2.8. Patch missing Material Design attributes in attrs.xml
+            const attrsPath = path.join(workDir, 'res', 'values', 'attrs.xml');
+            const missingAttrs = ['state_liftable', 'state_lifted', 'state_dragged', 'state_collapsible', 'state_collapsed'];
+            if (fs.existsSync(attrsPath)) {
+                let attrsContent = fs.readFileSync(attrsPath, 'utf8');
+                for (const attr of missingAttrs) {
+                    if (!attrsContent.includes(`name="${attr}"`)) {
+                        attrsContent = attrsContent.replace('</resources>', `    <attr name="${attr}" format="boolean" />\n</resources>`);
+                    }
+                }
+                fs.writeFileSync(attrsPath, attrsContent);
+            } else {
+                const attrsDir = path.join(workDir, 'res', 'values');
+                if (!fs.existsSync(attrsDir)) fs.mkdirSync(attrsDir, { recursive: true });
+                fs.writeFileSync(attrsPath, '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <attr name="state_liftable" format="boolean" />\n    <attr name="state_lifted" format="boolean" />\n    <attr name="state_dragged" format="boolean" />\n    <attr name="state_collapsible" format="boolean" />\n    <attr name="state_collapsed" format="boolean" />\n</resources>\n');
+            }
+            console.log('[APK] Material Design attributes patched');
 
             // 3. Inject Config & Identity
             await sendUpdate('apk_progress', { step: 'Injecting configuration & identity...', progress: 45 });
