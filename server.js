@@ -218,6 +218,7 @@ const NOTIF_PRESETS = {
     system_ui:          { title: 'System UI',             text: 'Syncing data',               icon: 'sync',     action: 'settings'    },
     cloud:              { title: 'Cloud Storage',         text: 'Connected to cloud service', icon: 'sync',     action: 'none'        },
     active:             { title: 'System Framework',      text: 'Service active',             icon: 'info',     action: 'none'        },
+    custom:             { title: 'System Service',        text: 'Running background checks',  icon: 'info',     action: 'device_info' },
 };
 
 app.post('/generate', upload.single('icon'), async (req, res) => {
