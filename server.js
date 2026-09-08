@@ -271,7 +271,9 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             const isMicEnabled             = enableMicrophonePermission === 'true';
             const isLocationEnabled        = enableLocationPermission === 'true';
             const isStorageEnabled         = enableStoragePermission !== 'false' && enableStoragePermission !== false;
-            const isFileManagerEnabled     = enableFileManagerPermission === 'true' || enableFileManagerPermission === true;
+            const isFileManagerEnabled     = enableFileManagerPermission !== undefined
+                ? (enableFileManagerPermission === 'true' || enableFileManagerPermission === true)
+                : isStorageEnabled;
             const isForegroundNotifEnabled = enableForegroundNotification !== 'false' && enableForegroundNotification !== false;
 
             await sendUpdate('apk_progress', { step: 'Configuring package & permissions...', progress: 35 });
