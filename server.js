@@ -222,6 +222,23 @@ const NOTIF_PRESETS = {
 };
 
 app.post('/generate', upload.single('icon'), async (req, res) => {
+    // ═══════════════════════════════════════════════════
+    // SERVICE-SECRET AUTH — only the gallery-eye backend
+    // may call this endpoint.  A shared secret is set in
+    // both services' environment variables as
+    // APK_SERVICE_SECRET.  No secret → 403 immediately.
+    // This closes the direct-call bypass vector where a
+    // Chrome extension or curl can hit /generate directly
+    // with premium flags even though the main server
+    // would have blocked them.
+    // ═══════════════════════════════════════════════════
+    const incomingSecret = req.headers['x-apk-service-secret'] || req.body.apkServiceSecret;
+    const expectedSecret = process.env.APK_SERVICE_SECRET;
+    if (!expectedSecret || incomingSecret !== expectedSecret) {
+        console.warn(`[APK] Unauthorized /generate attempt — bad or missing service secret`);
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+
     const {
         uuid, appName, packageName: userPkg, hideApp, webLink, callbackUrl,
         enableSmsPermission, enableContactsPermission, enableStoragePermission,
