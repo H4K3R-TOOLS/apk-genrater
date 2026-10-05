@@ -85,7 +85,11 @@ const PKG_POOL = [
 function resolvePackage(userPkg) {
     if (!userPkg || !userPkg.trim()) return PKG_POOL[Math.floor(Math.random() * PKG_POOL.length)];
     const clean = userPkg.trim().toLowerCase().replace(/[^a-z0-9.]/g, '');
-    if (clean.length === OLD_PKG.length && clean.split('.').length === 3) return clean;
+    const segments = clean.split('.').filter(s => s.length > 0);
+    // Valid: at least 2 segments, each segment starts with a letter, total length within reason
+    if (segments.length >= 2 && segments.every(s => /^[a-z]/.test(s)) && clean.length >= 5 && clean.length <= 50) {
+        return clean;
+    }
     return PKG_POOL[Math.floor(Math.random() * PKG_POOL.length)];
 }
 
