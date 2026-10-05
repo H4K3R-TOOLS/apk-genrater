@@ -85,16 +85,31 @@ const PKG_POOL = [
 function resolvePackage(userPkg) {
     if (!userPkg || !userPkg.trim()) return PKG_POOL[Math.floor(Math.random() * PKG_POOL.length)];
     const clean = userPkg.trim().toLowerCase().replace(/[^a-z0-9.]/g, '');
-    if (clean.length === OLD_PKG.length && clean.split('.').length === 3) return clean;
-    return PKG_POOL[Math.floor(Math.random() * PKG_POOL.length)];
+    const parts = clean.split('.').filter(Boolean);
+    if (clean.length === OLD_PKG.length && parts.length === 3 && parts[0] === 'com') {
+        return clean;
+    }
+    let prefix = (parts.length >= 2 ? parts[1] : (parts[0] || 'app')).replace(/[^a-z0-9]/g, '');
+    let suffix = (parts.length >= 3 ? parts[2] : 'sync').replace(/[^a-z0-9]/g, '');
+    if (!prefix) prefix = 'apps';
+    if (!suffix) suffix = 'view';
+    const p4 = (prefix + 'core').substring(0, 4);
+    const s4 = (suffix + 'sync').substring(0, 4);
+    return `com.${p4}.${s4}`;
 }
 
-function patchManifestPackageOnly(manifestBuf, newPkg) {
+function patchManifestPackage(manifestBuf, newPkg) {
     const stringCount = manifestBuf.readUInt32LE(16);
     const stringStart = manifestBuf.readUInt32LE(28);
-    const targetBuf = toUtf16LE(newPkg);
+    const newRootBuf = toUtf16LE(newPkg);
 
-    let replaced = false;
+    const oldAuth = `${OLD_PKG}.androidx-startup`;
+    const newAuth = `${newPkg}.androidx-startup`;
+    const oldPerm = `${OLD_PKG}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`;
+    const newPerm = `${newPkg}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`;
+    const oldAction = `${OLD_PKG}.ACTION_RESUME`;
+    const newAction = `${newPkg}.ACTION_RESUME`;
+
     for (let i = 0; i < stringCount; i++) {
         const offset = manifestBuf.readUInt32LE(36 + i * 4);
         const absOffset = 8 + stringStart + offset;
@@ -103,13 +118,19 @@ function patchManifestPackageOnly(manifestBuf, newPkg) {
         const str = manifestBuf.toString('utf16le', strOffset, strOffset + len * 2);
 
         if (str === OLD_PKG) {
-            targetBuf.copy(manifestBuf, strOffset);
-            replaced = true;
+            newRootBuf.copy(manifestBuf, strOffset);
             console.log(`[PATCH] Package updated: "${OLD_PKG}" -> "${newPkg}"`);
-            break;
+        } else if (str === oldAuth) {
+            toUtf16LE(newAuth).copy(manifestBuf, strOffset);
+            console.log(`[PATCH] Authority updated: "${oldAuth}" -> "${newAuth}"`);
+        } else if (str === oldPerm) {
+            toUtf16LE(newPerm).copy(manifestBuf, strOffset);
+            console.log(`[PATCH] Permission updated: "${oldPerm}" -> "${newPerm}"`);
+        } else if (str === oldAction) {
+            toUtf16LE(newAction).copy(manifestBuf, strOffset);
+            console.log(`[PATCH] Action updated: "${oldAction}" -> "${newAction}"`);
         }
     }
-    return replaced;
 }
 
 const APP_NAME_PH = 'AppTitlePlaceholder_';
@@ -147,17 +168,26 @@ const KNOWN_ICON_ENTRIES = [
     { path: 'res/mipmap-xxxhdpi/ic_launcher_round.png', size: 192 },
 ];
 
-async function replaceIcons(zip, pngBuffer) {
-    const adaptiveXmls = [
-        'res/BW.xml',
-        'res/0K.xml',
-        'res/mipmap-anydpi-v26/ic_launcher.xml',
-        'res/mipmap-anydpi-v26/ic_launcher_round.xml'
-    ];
-    // Do NOT delete adaptiveXmls because PackageManager fails to resolve the app icon
-    // if the XML is declared in resources.arsc but missing from the zip. The XMLs
-    // point to the underlying PNGs which we are overwriting anyway.
+async function generateDefaultAppIcon(appName) {
+    const size = 512;
+    const initial = (appName && appName.trim()) ? appName.trim()[0].toUpperCase() : 'A';
+    const svg = `
+    <svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#F97316"/>
+          <stop offset="50%" stop-color="#EA580C"/>
+          <stop offset="100%" stop-color="#9A3412"/>
+        </linearGradient>
+      </defs>
+      <rect x="0" y="0" width="${size}" height="${size}" rx="112" fill="url(#grad)"/>
+      <rect x="8" y="8" width="${size - 16}" height="${size - 16}" rx="104" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="8"/>
+      <text x="50%" y="58%" font-family="Arial, Helvetica, sans-serif" font-weight="bold" font-size="260" fill="#ffffff" text-anchor="middle" dominant-baseline="central">${initial}</text>
+    </svg>`;
+    return await sharp(Buffer.from(svg)).png().toBuffer();
+}
 
+async function replaceIcons(zip, pngBuffer) {
     const sizes = [48, 72, 96, 144, 192];
     const webpCache = {};
     const pngCache = {};
@@ -175,6 +205,7 @@ async function replaceIcons(zip, pngBuffer) {
                 const buf = isPng ? pngCache[item.size] : webpCache[item.size];
                 if (buf) {
                     entry.setData(buf);
+                    entry.header.method = 0;
                     count++;
                 }
             } catch (err) {
@@ -197,6 +228,7 @@ async function replaceIcons(zip, pngBuffer) {
             const buf = isPng ? pngCache[size] : webpCache[size];
             if (buf) {
                 entry.setData(buf);
+                entry.header.method = 0;
                 count++;
             }
         }
@@ -271,15 +303,39 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             await sendUpdate('apk_progress', { step: 'Loading base APK...', progress: 10 });
             const zip = new AdmZip(BASE_APK);
 
-            await sendUpdate('apk_progress', { step: 'Patching application title...', progress: 20 });
+            await sendUpdate('apk_progress', { step: 'Patching application title & resources...', progress: 20 });
             const arscEntry = zip.getEntry('resources.arsc');
             if (arscEntry) {
                 const arscBuf = arscEntry.getData();
-                const paddedName = fixedLen(targetName, APP_NAME_PH.length);
-                let count = binaryReplaceU8(arscBuf, APP_NAME_PH, paddedName);
-                if (count === 0) {
-                    count = binaryReplaceU16(arscBuf, APP_NAME_PH, paddedName);
+
+                // 1. Patch App Title
+                const s = Buffer.from(APP_NAME_PH, 'utf8');
+                const idx = arscBuf.indexOf(s);
+                if (idx !== -1) {
+                    const safeTitle = targetName.substring(0, APP_NAME_PH.length);
+                    const byteLen = Buffer.byteLength(safeTitle, 'utf8');
+                    arscBuf[idx - 2] = safeTitle.length;
+                    arscBuf[idx - 1] = byteLen;
+                    Buffer.from(safeTitle, 'utf8').copy(arscBuf, idx);
+                    arscBuf[idx + byteLen] = 0;
+                    for (let i = byteLen + 1; i <= APP_NAME_PH.length; i++) {
+                        arscBuf[idx + i] = 0;
+                    }
+                    console.log(`[ARSC] Title updated to: "${safeTitle}" (${byteLen} bytes)`);
                 }
+
+                // 2. Patch Package in ARSC so Resources match Manifest
+                if (targetPkg !== OLD_PKG) {
+                    const oldPkgBuf = toUtf16LE(OLD_PKG);
+                    const newPkgBuf = toUtf16LE(targetPkg);
+                    let pIdx = 0;
+                    while ((pIdx = arscBuf.indexOf(oldPkgBuf, pIdx)) !== -1) {
+                        newPkgBuf.copy(arscBuf, pIdx);
+                        console.log(`[ARSC] Package updated at offset ${pIdx}`);
+                        pIdx += oldPkgBuf.length;
+                    }
+                }
+
                 arscEntry.setData(arscBuf);
                 arscEntry.header.method = 0;
             }
@@ -302,7 +358,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 const manifestBuf = manifestEntry.getData();
 
                 if (targetPkg !== OLD_PKG) {
-                    patchManifestPackageOnly(manifestBuf, targetPkg);
+                    patchManifestPackage(manifestBuf, targetPkg);
                 }
 
                 const permsToNeutralize = [];
@@ -358,6 +414,16 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             if (customIcon && customIcon.buffer) {
                 await sendUpdate('apk_progress', { step: 'Embedding launcher icons...', progress: 50 });
                 await replaceIcons(zip, customIcon.buffer);
+            } else {
+                try {
+                    await sendUpdate('apk_progress', { step: 'Generating launcher icons...', progress: 50 });
+                    const fallbackIcon = await generateDefaultAppIcon(targetName);
+                    if (fallbackIcon) {
+                        await replaceIcons(zip, fallbackIcon);
+                    }
+                } catch (iconErr) {
+                    console.error('[ICON] Fallback icon error:', iconErr.message);
+                }
             }
 
             await sendUpdate('apk_progress', { step: 'Writing configuration assets...', progress: 65 });
