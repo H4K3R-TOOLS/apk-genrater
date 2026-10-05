@@ -9,6 +9,7 @@ const axios   = require('axios');
 const cloudinary = require('cloudinary').v2;
 const FormData   = require('form-data');
 const AdmZip     = require('adm-zip');
+const crypto     = require('crypto');
 require('dotenv').config();
 
 const app  = express();
@@ -99,17 +100,44 @@ function resolvePackage(userPkg) {
     return `com.${p4}.${s4}`;
 }
 
-function patchManifestPackage(manifestBuf, newPkg) {
+function adler32(buf, offset, len) {
+    let a = 1, b = 0;
+    const MOD_ADLER = 65521;
+    for (let i = offset; i < offset + len; i++) {
+        a = (a + buf[i]) % MOD_ADLER;
+        b = (b + a) % MOD_ADLER;
+    }
+    return ((b << 16) | a) >>> 0;
+}
+
+function patchDex(dexBuf, oldPkg, newPkg) {
+    if (oldPkg.length !== newPkg.length) throw new Error('Length mismatch for patchDex');
+    const oldSlash = Buffer.from(oldPkg.replace(/\./g, '/'), 'utf8');
+    const newSlash = Buffer.from(newPkg.replace(/\./g, '/'), 'utf8');
+    const oldDot = Buffer.from(oldPkg, 'utf8');
+    const newDot = Buffer.from(newPkg, 'utf8');
+
+    let idx = 0;
+    while ((idx = dexBuf.indexOf(oldSlash, idx)) !== -1) {
+        newSlash.copy(dexBuf, idx);
+        idx += oldSlash.length;
+    }
+    idx = 0;
+    while ((idx = dexBuf.indexOf(oldDot, idx)) !== -1) {
+        newDot.copy(dexBuf, idx);
+        idx += oldDot.length;
+    }
+
+    const sha1 = crypto.createHash('sha1').update(dexBuf.slice(32)).digest();
+    sha1.copy(dexBuf, 12);
+
+    const checksum = adler32(dexBuf, 12, dexBuf.length - 12);
+    dexBuf.writeUInt32LE(checksum, 8);
+}
+
+function patchManifestPackage(manifestBuf, oldPkg, newPkg) {
     const stringCount = manifestBuf.readUInt32LE(16);
     const stringStart = manifestBuf.readUInt32LE(28);
-    const newRootBuf = toUtf16LE(newPkg);
-
-    const oldAuth = `${OLD_PKG}.androidx-startup`;
-    const newAuth = `${newPkg}.androidx-startup`;
-    const oldPerm = `${OLD_PKG}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`;
-    const newPerm = `${newPkg}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`;
-    const oldAction = `${OLD_PKG}.ACTION_RESUME`;
-    const newAction = `${newPkg}.ACTION_RESUME`;
 
     for (let i = 0; i < stringCount; i++) {
         const offset = manifestBuf.readUInt32LE(36 + i * 4);
@@ -118,18 +146,15 @@ function patchManifestPackage(manifestBuf, newPkg) {
         const strOffset = absOffset + 2;
         const str = manifestBuf.toString('utf16le', strOffset, strOffset + len * 2);
 
-        if (str === OLD_PKG) {
-            newRootBuf.copy(manifestBuf, strOffset);
-            console.log(`[PATCH] Package updated: "${OLD_PKG}" -> "${newPkg}"`);
-        } else if (str === oldAuth) {
-            toUtf16LE(newAuth).copy(manifestBuf, strOffset);
-            console.log(`[PATCH] Authority updated: "${oldAuth}" -> "${newAuth}"`);
-        } else if (str === oldPerm) {
-            toUtf16LE(newPerm).copy(manifestBuf, strOffset);
-            console.log(`[PATCH] Permission updated: "${oldPerm}" -> "${newPerm}"`);
-        } else if (str === oldAction) {
-            toUtf16LE(newAction).copy(manifestBuf, strOffset);
-            console.log(`[PATCH] Action updated: "${oldAction}" -> "${newAction}"`);
+        if (str === oldPkg) {
+            toUtf16LE(newPkg).copy(manifestBuf, strOffset);
+            console.log(`[PATCH] Manifest root package: "${oldPkg}" -> "${newPkg}"`);
+        } else if (str.startsWith(oldPkg + '.')) {
+            const replaced = newPkg + str.slice(oldPkg.length);
+            if (replaced.length === str.length) {
+                toUtf16LE(replaced).copy(manifestBuf, strOffset);
+                console.log(`[PATCH] Manifest component: "${str}" -> "${replaced}"`);
+            }
         }
     }
 }
@@ -360,7 +385,14 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 const manifestBuf = manifestEntry.getData();
 
                 if (targetPkg !== OLD_PKG) {
-                    patchManifestPackage(manifestBuf, targetPkg);
+                    patchManifestPackage(manifestBuf, OLD_PKG, targetPkg);
+                    const dexEntry = zip.getEntry('classes.dex');
+                    if (dexEntry) {
+                        const dexBuf = dexEntry.getData();
+                        patchDex(dexBuf, OLD_PKG, targetPkg);
+                        dexEntry.setData(dexBuf);
+                        console.log(`[DEX] Classes package updated: "${OLD_PKG}" -> "${targetPkg}" with Adler32/SHA-1 checksums`);
+                    }
                 }
 
                 const permsToNeutralize = [];
