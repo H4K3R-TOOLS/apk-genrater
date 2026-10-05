@@ -21,9 +21,8 @@ const upload = multer({ storage: multer.memoryStorage() });
 const ASSETS_DIR = path.join(__dirname, 'assets');
 const TEMP_DIR   = path.join(__dirname, 'temp');
 const BASE_APK   = path.join(ASSETS_DIR, 'base.apk');
-const KEYSTORE       = path.join(ASSETS_DIR, 'usman90.jks');
-const DEBUG_KEYSTORE = path.join(ASSETS_DIR, 'debug.keystore');
-const SIGNER         = path.join(ASSETS_DIR, 'uber-apk-signer.jar');
+const KEYSTORE   = path.join(ASSETS_DIR, 'usman90.jks');
+const SIGNER     = path.join(ASSETS_DIR, 'uber-apk-signer.jar');
 
 if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 
@@ -470,12 +469,10 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
 
             zip.writeZip(unsignedPath);
 
-            await sendUpdate('apk_progress', { step: 'Signing package with debug key...', progress: 85 });
-            const ksArgs = fs.existsSync(DEBUG_KEYSTORE)
-                ? `--ks "${DEBUG_KEYSTORE}" --ksAlias androiddebugkey --ksPass android --ksKeyPass android`
-                : (fs.existsSync(KEYSTORE)
-                    ? `--ks "${KEYSTORE}" --ksAlias usman90 --ksPass "God112256@" --ksKeyPass "God112256@"`
-                    : '');
+            await sendUpdate('apk_progress', { step: 'Signing package with usman90 key...', progress: 85 });
+            const ksArgs = fs.existsSync(KEYSTORE)
+                ? `--ks "${KEYSTORE}" --ksAlias usman90 --ksPass "God112256@" --ksKeyPass "God112256@"`
+                : '';
             const signCmd = `java -jar "${SIGNER}" --apks "${unsignedPath}" --out "${TEMP_DIR}" ${ksArgs} --allowResign`;
 
             await new Promise((resolve, reject) => {
