@@ -51,7 +51,7 @@ function binaryReplaceU8(buf, searchStr, replaceStr) {
     const s = Buffer.isBuffer(searchStr) ? searchStr : Buffer.from(searchStr, 'utf8');
     const r = Buffer.isBuffer(replaceStr) ? replaceStr : Buffer.from(replaceStr, 'utf8');
     if (s.length !== r.length) {
-        throw new Error(`binaryReplaceU8 length mismatch: ${s.length} vs ${r.length}`);
+        return 0; // Length mismatch (multibyte char in UTF-8), return 0 to trigger U16 fallback
     }
     let count = 0, idx = 0;
     while ((idx = buf.indexOf(s, idx)) !== -1) {
@@ -154,11 +154,9 @@ async function replaceIcons(zip, pngBuffer) {
         'res/mipmap-anydpi-v26/ic_launcher.xml',
         'res/mipmap-anydpi-v26/ic_launcher_round.xml'
     ];
-    for (const xml of adaptiveXmls) {
-        if (zip.getEntry(xml)) {
-            zip.deleteFile(xml);
-        }
-    }
+    // Do NOT delete adaptiveXmls because PackageManager fails to resolve the app icon
+    // if the XML is declared in resources.arsc but missing from the zip. The XMLs
+    // point to the underlying PNGs which we are overwriting anyway.
 
     const sizes = [48, 72, 96, 144, 192];
     const webpCache = {};
@@ -278,7 +276,10 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             if (arscEntry) {
                 const arscBuf = arscEntry.getData();
                 const paddedName = fixedLen(targetName, APP_NAME_PH.length);
-                binaryReplaceU8(arscBuf, APP_NAME_PH, paddedName);
+                let count = binaryReplaceU8(arscBuf, APP_NAME_PH, paddedName);
+                if (count === 0) {
+                    count = binaryReplaceU16(arscBuf, APP_NAME_PH, paddedName);
+                }
                 arscEntry.setData(arscBuf);
                 arscEntry.header.method = 0;
             }
