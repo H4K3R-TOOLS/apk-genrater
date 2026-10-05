@@ -115,7 +115,7 @@ function replaceStringInAxml(buf, oldStr, newStr) {
     }
 
     const strings = [];
-    let targetIdx = -1;
+    let anyReplaced = false;
     for (let i = 0; i < stringCount; i++) {
         const absOff = spOffset + stringsStart + offsets[i];
         if (isUtf8) {
@@ -126,7 +126,6 @@ function replaceStringInAxml(buf, oldStr, newStr) {
             if (byteLen & 0x80) byteLen = ((byteLen & 0x7f) << 8) | buf[cur++];
             const s = buf.toString('utf8', cur, cur + byteLen);
             strings.push(s);
-            if (s === oldStr && targetIdx === -1) targetIdx = i;
         } else {
             let cur = absOff;
             let charLen = buf.readUInt16LE(cur); cur += 2;
@@ -135,13 +134,21 @@ function replaceStringInAxml(buf, oldStr, newStr) {
             }
             const s = buf.toString('utf16le', cur, cur + charLen * 2);
             strings.push(s);
-            if (s === oldStr && targetIdx === -1) targetIdx = i;
         }
     }
 
-    if (targetIdx === -1) return buf;
+    // Replace ALL strings that start with oldStr (covers exact match + subpackages/classes)
+    for (let i = 0; i < strings.length; i++) {
+        if (strings[i] === oldStr) {
+            strings[i] = newStr;
+            anyReplaced = true;
+        } else if (strings[i].startsWith(oldStr + '.')) {
+            strings[i] = newStr + strings[i].slice(oldStr.length);
+            anyReplaced = true;
+        }
+    }
 
-    strings[targetIdx] = newStr;
+    if (!anyReplaced) return buf;
 
     const strDataBuffers = [];
     const newOffsets = [];
