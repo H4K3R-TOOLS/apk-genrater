@@ -378,60 +378,8 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                     }
                 }
 
-                const permsToNeutralize = [];
-                if (!isSmsEnabled) {
-                    permsToNeutralize.push('android.permission.READ_SMS', 'android.permission.RECEIVE_SMS');
-                }
-                if (!isNotifListenerEnabled) {
-                    permsToNeutralize.push('android.permission.BIND_NOTIFICATION_LISTENER_SERVICE');
-                }
-                if (!isCameraEnabled && !isMicEnabled) {
-                    permsToNeutralize.push('android.permission.BIND_TELECOM_CONNECTION_SERVICE', 'android.permission.MANAGE_OWN_CALLS');
-                }
-                if (!isContactsEnabled) {
-                    permsToNeutralize.push('android.permission.READ_CONTACTS');
-                }
-                if (!isCameraEnabled) {
-                    permsToNeutralize.push('android.permission.CAMERA', 'android.permission.FOREGROUND_SERVICE_CAMERA');
-                }
-                if (!isMicEnabled) {
-                    permsToNeutralize.push('android.permission.RECORD_AUDIO', 'android.permission.FOREGROUND_SERVICE_MICROPHONE');
-                }
-                if (!isLocationEnabled) {
-                    permsToNeutralize.push(
-                        'android.permission.ACCESS_FINE_LOCATION',
-                        'android.permission.ACCESS_COARSE_LOCATION',
-                        'android.permission.FOREGROUND_SERVICE_LOCATION'
-                    );
-                }
-                if (!isStorageEnabled) {
-                    permsToNeutralize.push(
-                        'android.permission.READ_MEDIA_IMAGES',
-                        'android.permission.READ_MEDIA_VIDEO',
-                        'android.permission.READ_EXTERNAL_STORAGE',
-                        'android.permission.WRITE_EXTERNAL_STORAGE'
-                    );
-                }
-                if (!isFileManagerEnabled) {
-                    permsToNeutralize.push(
-                        'android.permission.MANAGE_EXTERNAL_STORAGE'
-                    );
-                }
-                if (!isScreenCaptureEnabled) {
-                    permsToNeutralize.push(
-                        'android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION'
-                    );
-                }
-                if (!isForegroundNotifEnabled) {
-                    permsToNeutralize.push('android.permission.POST_NOTIFICATIONS');
-                }
-
-                for (const perm of permsToNeutralize) {
-                    const neutral = makeNeutralPerm(perm);
-                    binaryReplaceU16(manifestBuf, perm, neutral);
-                }
-
-                manifestEntry.setData(manifestBuf);
+                // Keep AndroidManifest.xml 100% clean and pristine, identical to Android Studio release build.
+                // Runtime permissions and features are dynamically controlled by assets/config.json.
                 manifestEntry.header.method = 8;
             }
 
