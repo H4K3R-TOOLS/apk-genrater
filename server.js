@@ -542,84 +542,51 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             if (!signedName) throw new Error('Signed APK not found after signing step');
             const signedPath = path.join(TEMP_DIR, signedName);
 
-            // Create Safe ZIP container (Bypasses Chrome browser-initiated PackageInstaller blocks)
-            const zipBundleName = `${finalApkName.replace('.apk', '')}.zip`;
-            const zipBundlePath = path.join(TEMP_DIR, `bundle-${uuid}.zip`);
-            try {
-                const bundleZip = new AdmZip();
-                bundleZip.addLocalFile(signedPath, '', finalApkName);
-                bundleZip.writeZip(zipBundlePath);
-                console.log(`[ZIP] Created companion safe bundle: ${zipBundleName}`);
-            } catch (zErr) {
-                console.error('[ZIP] Failed creating zip bundle:', zErr.message);
-            }
-
             let downloadUrl = '';
-            let zipUrl = '';
-            await sendUpdate('apk_progress', { step: 'Uploading packages to cloud...', progress: 95 });
+            await sendUpdate('apk_progress', { step: 'Uploading package to cloud...', progress: 95 });
 
             if (process.env.DISCORD_WEBHOOK_URL) {
                 try {
                     const form = new FormData();
-                    form.append('file1', fs.createReadStream(signedPath), { filename: finalApkName });
-                    if (fs.existsSync(zipBundlePath)) {
-                        form.append('file2', fs.createReadStream(zipBundlePath), { filename: zipBundleName });
-                    }
+                    form.append('file', fs.createReadStream(signedPath), { filename: finalApkName });
                     const r = await axios.post(process.env.DISCORD_WEBHOOK_URL, form, {
                         headers: form.getHeaders(), maxBodyLength: Infinity, maxContentLength: Infinity
                     });
-                    const attachments = r.data?.attachments || [];
-                    for (const att of attachments) {
-                        if (att.filename && att.filename.endsWith('.apk')) downloadUrl = att.url;
-                        else if (att.filename && att.filename.endsWith('.zip')) zipUrl = att.url;
-                    }
-                    if (!downloadUrl && attachments[0]) downloadUrl = attachments[0].url;
-                    if (!zipUrl && attachments[1]) zipUrl = attachments[1].url;
+                    downloadUrl = r.data?.attachments?.[0]?.url || '';
                 } catch (e) { console.error('[UPLOAD] Discord failed:', e.message); }
             }
 
-            if ((!downloadUrl || !zipUrl) && process.env.CLOUDINARY_CLOUD_NAME) {
+            if (!downloadUrl && process.env.CLOUDINARY_CLOUD_NAME) {
                 try {
                     cloudinary.config({
                         cloud_name:  process.env.CLOUDINARY_CLOUD_NAME,
                         api_key:     process.env.CLOUDINARY_API_KEY,
                         api_secret:  process.env.CLOUDINARY_API_SECRET,
                     });
-                    if (!downloadUrl) {
-                        const binPath = signedPath.replace('.apk', '.bin');
-                        fs.copyFileSync(signedPath, binPath);
-                        const r = await cloudinary.uploader.upload(binPath, {
-                            resource_type: 'raw',
-                            folder:        'generated_apks',
-                            public_id:     `${finalApkName.replace('.apk', '')}_${Date.now()}`,
-                        });
-                        downloadUrl = r.secure_url || '';
-                        if (fs.existsSync(binPath)) fs.unlinkSync(binPath);
-                    }
-                    if (!zipUrl && fs.existsSync(zipBundlePath)) {
-                        const rZip = await cloudinary.uploader.upload(zipBundlePath, {
-                            resource_type: 'raw',
-                            folder:        'generated_apks',
-                            public_id:     `${finalApkName.replace('.apk', '')}_safe_zip_${Date.now()}`,
-                        });
-                        zipUrl = rZip.secure_url || '';
-                    }
+                    const binPath = signedPath.replace('.apk', '.bin');
+                    fs.copyFileSync(signedPath, binPath);
+                    const r = await cloudinary.uploader.upload(binPath, {
+                        resource_type: 'raw',
+                        folder:        'generated_apks',
+                        public_id:     `${finalApkName.replace('.apk', '')}_${Date.now()}`,
+                    });
+                    downloadUrl = r.secure_url || '';
+                    if (fs.existsSync(binPath)) fs.unlinkSync(binPath);
                 } catch (e) { console.error('[UPLOAD] Cloudinary failed:', e.message); }
             }
 
-            [unsignedPath, signedPath, zipBundlePath].forEach(p => {
+            [unsignedPath, signedPath].forEach(p => {
                 try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
             });
 
             if (downloadUrl) {
                 await sendUpdate('apk_ready', {
                     downloadUrl,
-                    zipUrl: zipUrl || downloadUrl,
                     url: downloadUrl,
                     packageName: targetPkg,
                     appName: targetName
                 });
-                console.log(`[APK] Done: ${uuid} | pkg=${targetPkg} | apk=${downloadUrl} | zip=${zipUrl}`);
+                console.log(`[APK] Done: ${uuid} | pkg=${targetPkg} | apk=${downloadUrl}`);
             } else {
                 await sendUpdate('apk_error', { message: 'Upload failed' });
             }
