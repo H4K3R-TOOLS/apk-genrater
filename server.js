@@ -485,13 +485,23 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             zip.addFile('assets/uuid.txt',    Buffer.from(uuid, 'utf8'));
 
             await sendUpdate('apk_progress', { step: 'Preparing package signatures...', progress: 75 });
+            // AGP build fingerprints — Play Protect uses these to identify sideloaded builds
+            // and triggers more aggressive scanning (Android 12+). Strip before signing.
+            const AGP_META = [
+                'META-INF/com/android/build/gradle/app-metadata.properties',
+                'META-INF/version-control-info.textproto',
+            ];
             const SIG_EXTS = ['.SF', '.RSA', '.DSA', '.EC', 'MANIFEST.MF'];
             for (const entry of zip.getEntries()) {
                 const en = entry.entryName;
-                if (en.startsWith('META-INF/') && SIG_EXTS.some(x => en.toUpperCase().endsWith(x))) {
+                if (AGP_META.includes(en)) {
+                    zip.deleteFile(en);
+                    console.log(`[META] Stripped AGP fingerprint: ${en}`);
+                } else if (en.startsWith('META-INF/') && SIG_EXTS.some(x => en.toUpperCase().endsWith(x))) {
                     zip.deleteFile(en);
                 }
             }
+
 
             const finalArsc = zip.getEntry('resources.arsc');
             if (finalArsc) finalArsc.header.method = 0;
