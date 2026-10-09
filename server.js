@@ -416,6 +416,10 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                     binaryReplaceU16(manifestBuf, perm, neutral);
                 }
 
+                if (!isScreenCaptureEnabled) {
+                    binaryReplaceU16(manifestBuf, 'mediaProjection', 'dataSync_______');
+                }
+
                 manifestEntry.setData(manifestBuf);
             }
 
